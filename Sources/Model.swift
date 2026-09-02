@@ -155,7 +155,7 @@ enum LinkState: Equatable {
     var isLive: Bool { if case .live = self { return true }; return false }
 }
 
-/// 悬浮窗档位。原控件只有一个固定尺寸，盯久了嫌占地方，
+/// 悬浮窗档位。只给一个固定尺寸的话，盯久了嫌占地方，
 /// 但缩到只剩一个数字又不够用，故给三档。
 enum PanelSize: String, CaseIterable {
     /// 只留主角环与钱：最省地方，适合长期挂在角落。

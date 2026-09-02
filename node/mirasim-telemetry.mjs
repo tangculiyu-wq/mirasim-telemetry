@@ -33,7 +33,7 @@ const CATALOG_FILE = join(HOME, '.mirasim', 'models-dev-cache.json');
 const CLAUDE_PROJECTS = join(HOME, '.claude', 'projects');
 const IS_WIN = platform() === 'win32';
 
-const UI_PORT_LO = 5990, UI_PORT_HI = 5999;   // 与 MiraQuota 的 4988–4995 错开，两者并存不抢
+const UI_PORT_LO = 5990, UI_PORT_HI = 5999;   // 与 MiraQuota 等同类工具常用的 4988–4995 错开，并存不抢
 const LIMITS_EVERY_MS = 20_000;
 const RELAY_EVERY_MS = 15_000;
 const LEDGER_EVERY_MS = 60_000;

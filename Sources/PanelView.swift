@@ -257,7 +257,7 @@ struct PanelView: View {
 }
 
 /// 遥测行：模型吐字速度 + 今日花费。
-/// 这两样是每天都要瞄一眼的数，原控件把速度压在一张要切换才看得到的卡片里，等于没有。
+/// 这两样是每天都要瞄一眼的数，把速度压在一张要切换才看得到的卡片里，等于没有。
 struct TelemetryBar: View {
     let speeds: [Speed]
     let today: WindowCost?
@@ -578,7 +578,7 @@ struct SourceDot: View {
 
 /// 没有数据时的样子。
 ///
-/// 这里刻意不显示任何数字。原控件在读不到时会拿旧锚点推算一个当前值，
+/// 这里刻意不显示任何数字。有的做法是读不到时拿旧锚点推算一个当前值，
 /// 界面上和真值长得一模一样——那是「不准」的根源。读不到就说读不到。
 struct EmptyState: View {
     let link: LinkState

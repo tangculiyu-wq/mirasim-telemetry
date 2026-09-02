@@ -148,7 +148,6 @@ macOS 14 或更新。
 ./install.sh                             # 构建 + 装到 ~/Applications + 启动
 "~/Applications/Mirasim 遥测.app/Contents/MacOS/Mirasim 遥测" --login on|off|status   # 开机自启
 
-./scripts/uninstall-miraquota.sh         # 从 MiraQuota 迁移过来时卸掉旧体系（先备份到 ~）
 ```
 
 bundle id 为 `local.eduhuan.ring`，偏好按它存；改了会丢掉调好的位置与透明度。
@@ -171,12 +170,12 @@ bundle id 为 `local.eduhuan.ring`，偏好按它存；改了会丢掉调好的�
 遥测 --render-icons /tmp/i.png [--light]
 ```
 
-## 与 MiraQuota 的关系
+## 与其它同类工具的区别
 
-本项目替代 [MiraQuota](https://github.com/Heartcoolman/MiraQuota)。MiraQuota 把控件经 CDP 注入 Mirasim 的渲染进程，
-要求 Mirasim 以 `--remote-debugging-port` 启动；本项目是独立窗口，靠 CGWindowList 跟着 Mirasim 的窗口贴角，
-不需要调试端口，也不存在「本机任何进程都能在 Mirasim 里执行 JS」的代价。
-口径上的差别见「三条准确性规矩」：不走满额回归标定，不在读不到时推算。
+同类第三方工具里，[MiraQuota](https://github.com/Heartcoolman/MiraQuota) 走的是把控件经 CDP 注入 Mirasim 渲染进程的路线，
+需要 Mirasim 以 `--remote-debugging-port` 启动。本项目走的是独立窗口路线：靠 CGWindowList 跟着 Mirasim 的窗口贴角，
+不需要调试端口，Mirasim 的进程隔离不受影响。口径上本项目的取舍见「三条准确性规矩」：
+不走满额回归标定，不在读不到时推算。两者都是独立的第三方工具，与 Mirasim 官方无关，各取所需。
 
 ## 已知限制
 
