@@ -16,6 +16,34 @@ macOS 上的 Mirasim 额度仪表。它由一个悬浮面板和一个菜单栏�
 > per-model speed, and weekly/monthly spend. Not affiliated with Mirasim or Anthropic.
 > Documentation is in Chinese.
 
+## 快速开始
+
+**macOS**（macOS 14 或更新，先装 Command Line Tools：终端运行 `xcode-select --install`；Mirasim 保持运行）：
+
+```bash
+git clone https://github.com/tangculiyu-wq/mirasim-telemetry.git
+cd mirasim-telemetry
+./install.sh
+```
+
+脚本会编译、把「Mirasim 遥测.app」装进 `~/Applications` 并启动。启动后没有 Dock 图标，
+屏幕右上角出现悬浮面板，菜单栏出现一个圆环图标。以后要打开它，在 Finder 的 `~/Applications`
+里双击，或用 Spotlight 搜「Mirasim 遥测」。左键点菜单栏图标可以显示或隐藏面板，右键打开菜单。
+要开机自启，在菜单里勾「开机自动启动」。
+
+**Windows**（先装 [Node.js](https://nodejs.org) 22 或更新；Mirasim 保持运行）：
+
+```powershell
+git clone https://github.com/tangculiyu-wq/mirasim-telemetry.git
+cd mirasim-telemetry
+node node\mirasim-telemetry.mjs --doctor     # 自检，看每一步是否通过
+node node\mirasim-telemetry.mjs --app        # 启动，并在浏览器应用窗口里打开面板
+```
+
+面板地址是 `http://127.0.0.1:5990/`。关掉窗口后台脚本仍在运行，重新打开这个地址即可；
+脚本退出后重新运行上面的命令。要开机自启，运行 `node\install-windows.ps1`（见下文）。
+没有 git 的话，在 GitHub 页面点「Code → Download ZIP」解压后同样运行。
+
 ## 面板内容
 
 每个额度窗口一张卡（5 小时 / 7 天 / 7 天 · Fable 5.1）。每张卡包含：
