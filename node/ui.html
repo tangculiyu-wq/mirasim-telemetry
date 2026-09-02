@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirasim 遥测</title>
+<style>
+  :root { color-scheme: light dark;
+    --bg: #f3f3f5; --card: rgba(0,0,0,.045); --card-2: rgba(0,0,0,.03); --ink: #1c1c1e; --ink-2: rgba(28,28,30,.62); --ink-3: rgba(28,28,30,.42); --ink-4: rgba(28,28,30,.28);
+    --track: rgba(0,0,0,.10); --pace: rgba(0,0,0,.35); --accent-blue: #4468d6; }
+  @media (prefers-color-scheme: dark) { :root:not(.light) {
+    --bg: #1f2024; --card: rgba(255,255,255,.055); --card-2: rgba(255,255,255,.035); --ink: #ececf0; --ink-2: rgba(236,236,240,.66); --ink-3: rgba(236,236,240,.45); --ink-4: rgba(236,236,240,.28);
+    --track: rgba(255,255,255,.10); --pace: rgba(255,255,255,.55); --accent-blue: #9ebcff; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.35 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; -webkit-font-smoothing: antialiased; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono", "Microsoft YaHei", monospace; font-variant-numeric: tabular-nums; }
+  #app { width: 380px; max-width: 100vw; margin: 0 auto; padding: 12px 12px 10px; }
+  header { display: flex; align-items: baseline; gap: 8px; padding: 2px 4px 8px; }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; flex: 1; }
+  .pill { font-size: 10px; padding: 1px 7px; border-radius: 999px; background: var(--card); color: var(--ink-2); white-space: nowrap; }
+  .acct { display: flex; align-items: center; gap: 8px; padding: 0 4px 10px; font-size: 12px; color: var(--ink-2); }
+  .plan { font-size: 9.5px; font-weight: 800; letter-spacing: .04em; padding: 1px 7px; border-radius: 999px; background: #ff9a1f; color: #1a1200; }
+  .acct .exp { margin-left: auto; color: var(--ink-3); }
+  .card { background: var(--card); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+  .row { display: flex; align-items: center; gap: 0; height: 15px; white-space: nowrap; overflow: hidden; }
+  .row .sp { flex: 1; min-width: 4px; }
+  .title { display: flex; align-items: center; gap: 8px; height: 22px; margin-bottom: 6px; }
+  .title .name { font-weight: 700; font-size: 13.5px; }
+  .title svg { height: 16px; width: 70px; flex: none; }
+  .title .left { margin-left: auto; font-size: 10px; color: var(--ink-3); }
+  .title .pct { font-size: 18px; font-weight: 800; }
+  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--track); margin: 4px 0 8px; overflow: hidden; }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; transition: width .4s ease; }
+  .bar .pace { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--pace); border-radius: 1px; }
+  .t2 { color: var(--ink-2); } .t3 { color: var(--ink-3); } .t4 { color: var(--ink-4); }
+  .small { font-size: 10px; } .xs { font-size: 9.5px; }
+  .equiv { font-size: 9.5px; }
+  .warn { color: #ff8a3d; } .good { color: #8fdc4a; } .bad { color: #ff5c47; }
+  .ledger .head { display: flex; align-items: center; gap: 8px; height: 26px; margin-bottom: 4px; }
+  .ledger .head .name { font-weight: 700; }
+  .ledger .head .tag { font-size: 9px; color: var(--ink-4); }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 15px; width: 104px; }
+  .bars i { flex: 1; background: var(--accent-blue); opacity: .55; border-radius: 1px; min-height: 1px; }
+  .bars i:last-child { opacity: 1; }
+  .ledger .big { margin-left: auto; font-size: 16.5px; font-weight: 800; color: var(--accent-blue); }
+  .speed .row { height: 16px; }
+  .speed .model { font-weight: 700; font-size: 11px; margin-right: 6px; min-width: 44px; }
+  .speed .dim { opacity: .55; }
+  .bolt { color: #6be04a; margin-right: 6px; font-size: 10px; }
+  .bolt.off { color: var(--ink-4); }
+  footer { display: flex; align-items: center; gap: 6px; padding: 6px 6px 0; font-size: 11px; color: var(--ink-3); }
+  footer .dot { width: 7px; height: 7px; border-radius: 50%; background: #6be04a; }
+  footer .dot.stale { background: #e0b73a; } footer .dot.off { background: #999; }
+  footer .refresh { margin-left: auto; cursor: pointer; text-decoration: underline dotted; }
+  .empty { padding: 40px 10px; text-align: center; color: var(--ink-3); }
+  /* 名字与百分比不折行，地方不够时压缩走势线与柱状图 */
+  .title .name, .title .left, .title .pct, .ledger .head .name, .ledger .head .tag, .ledger .head .big { white-space: nowrap; flex: none; }
+  .title svg { flex: 1 1 50px; min-width: 24px; max-width: 70px; width: auto; }
+  .bars { flex: 1 1 60px; min-width: 40px; max-width: 104px; width: auto; }
+  html.shot #app { margin: 0; }
+  :root.dark { --bg: #1f2024; --card: rgba(255,255,255,.055); --card-2: rgba(255,255,255,.035); --ink: #ececf0; --ink-2: rgba(236,236,240,.66); --ink-3: rgba(236,236,240,.45); --ink-4: rgba(236,236,240,.28); --track: rgba(255,255,255,.10); --pace: rgba(255,255,255,.55); --accent-blue: #9ebcff; }
+  .note { font-size: 10.5px; color: var(--ink-3); padding: 2px 6px 6px; }
+</style>
+</head>
+<body>
+<div id="app"><div class="empty">连接中…</div></div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  // ?theme=light|dark 强制主题（截图/调试用），?shot 左对齐便于裁图
+  const q = new URLSearchParams(location.search);
+  if (q.get('theme')) document.documentElement.classList.add(q.get('theme'));
+  if (q.has('shot')) document.documentElement.classList.add('shot');
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const usdPlain = (v) => { const d = v >= 100 ? 0 : v >= 10 ? 1 : 2; return '$' + v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); };
+  const usd = (v) => '≈' + usdPlain(v);
+  const points = (v) => Math.round(v).toLocaleString('en-US');
+  const pct = (v, exact) => v.toFixed(exact ? 5 : 1) + '%';
+  const pad = (n) => String(n).padStart(2, '0');
+  const tick = (ms) => { let s = Math.max(0, Math.floor(ms / 1000)); const d = Math.floor(s / 86400); s %= 86400; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60; return (d ? d + '天 ' : '') + pad(h) + ':' + pad(m) + ':' + pad(sec); };
+  const ago = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return s < 5 ? '刚刚' : s < 60 ? s + ' 秒前' : s < 3600 ? Math.floor(s / 60) + ' 分钟前' : s < 86400 ? Math.floor(s / 3600) + ' 小时前' : Math.floor(s / 86400) + ' 天前'; };
+  const clockTight = (t) => { const d = new Date(t), n = new Date(); const same = d.toDateString() === n.toDateString(); return (same ? '' : (d.getMonth() + 1) + '/' + d.getDate() + ' ') + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const sev = (p) => { const x = Math.min(1, Math.max(0, p / 100)); const hue = x < .6 ? 130 - (x / .6) * 85 : 45 - ((x - .6) / .4) * 40; return `hsl(${hue} 75% 55%)`; };
+
+  let data = null;
+  const spark = (trend) => {
+    if (!trend || trend.length < 3) return '<svg></svg>';
+    const xs = trend.map((p) => p[0]), ys = trend.map((p) => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs) || x0 + 1, y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const yr = Math.max(y1 - y0, 0.2);
+    const pts = trend.map((p) => `${((p[0] - x0) / (x1 - x0) * 68 + 1).toFixed(1)},${(15 - (p[1] - y0) / yr * 13 - 1).toFixed(1)}`).join(' ');
+    return `<svg viewBox="0 0 70 16" preserveAspectRatio="none"><polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}"/></svg>`;
+  };
+  const equivTip = (w) => {
+    const c = w.cost || {}; const b = w.budgetPoints; let s = '整窗额度换成钱的两个固定参照：全花在普通模型上值多少，全花在 Fable 5.1 上值多少。';
+    if (b) { const parts = []; if (c.fullRegularUSD) parts.push(`普通模型每点 ≈ $${(c.fullRegularUSD / b).toFixed(4)}`); if (c.fullFableUSD) parts.push(`Fable 5.1 每点 ≈ $${(c.fullFableUSD / b).toFixed(4)}`); if (parts.length) s += '本窗口实测：' + parts.join('，') + '。'; }
+    return s + '点的扣法（实测）：普通模型每 $1 标价扣 100 点；Fable 每 $1 Fable 5 标价扣 200 点，5.1 也按 5 的价目扣。所以 5.1 的美元数比 5 小，是同样的活按 5.1 标价更便宜，不是额度变少。';
+  };
+
+  function windowCard(w, now) {
+    const exact = w.precision === 'exact'; const color = sev(w.usedPercent); const c = w.cost || {};
+    const left = Math.max(0, 100 - w.usedPercent);
+    let money;
+    if (c.fullUSD != null) money = `<span class="t2">${usd(c.spentUSD)}</span><span class="t3"> / ${usd(c.fullUSD)}</span><span class="t2">&nbsp;&nbsp;余${usd(Math.max(0, c.fullUSD - c.spentUSD))}</span><span class="sp"></span>${c.requests ? `<span class="t3">${c.requests.toLocaleString()} 次</span>` : ''}`;
+    else if (c.spentUSD > 0) money = `<span class="t2">${usd(c.spentUSD)}</span><span class="t4">&nbsp;&nbsp;额度标定中</span><span class="sp"></span>${c.requests ? `<span class="t3">${c.requests.toLocaleString()} 次</span>` : ''}`;
+    else money = `<span class="t4">金额待精确口径</span><span class="sp"></span>`;
+    let equiv = '';
+    if (w.name.startsWith('7d') && w.budgetPoints && (c.fullRegularUSD != null || c.fullFableUSD != null)) {
+      const parts = [];
+      if (c.fullRegularUSD != null) parts.push(`<span class="t3">普通模型 </span><span class="t2">${usdPlain(c.fullRegularUSD)}</span>`);
+      if (c.fullFableUSD != null) parts.push(`<span class="t3">Fable 5.1 </span><span class="t2">${usdPlain(c.fullFableUSD)}</span>${c.fullFableAtF5USD ? `<span class="t4">（按 Fable 5 价 ${usdPlain(c.fullFableAtF5USD)}）</span>` : ''}`);
+      equiv = `<div class="row mono equiv" title="${esc(equivTip(w))}"><span class="t4">${points(w.budgetPoints)} 点 ≈ </span>${parts.join('<span class="t4"> / </span>')}<span class="sp"></span></div>`;
+    }
+    const b = w.burn; const paceD = w.paceDelta;
+    const paceTxt = paceD == null ? '' : paceD > 0.5 ? `<span class="${paceD > 20 ? 'bad' : 'warn'}">匀速快${paceD.toFixed(0)}%</span>` : paceD < -0.5 ? `<span class="good">匀速省${(-paceD).toFixed(0)}%</span>` : `<span class="good">贴着匀速</span>`;
+    const eta = b && b.exhaustAt && b.exhaustAt < w.resetAt ? `<span class="bad">&nbsp;&nbsp;${clockTight(b.exhaustAt)}尽</span>` : '';
+    return `<div class="card">
+      <div class="title"><span class="name">${esc(w.label)}</span><span style="color:${color}">${spark(w.trend)}</span><span class="left mono">剩${left.toFixed(1)}%</span><span class="pct mono" style="color:${color}">${pct(w.usedPercent, exact)}</span></div>
+      <div class="bar"><div class="fill" style="width:${Math.min(100, w.usedPercent)}%;background:${color}"></div>${w.pacePercent != null ? `<div class="pace" style="left:calc(${w.pacePercent}% - 1px)"></div>` : ''}</div>
+      <div class="row mono small">${w.usedPoints != null ? `<span class="t2">${points(w.usedPoints)}</span><span class="t3"> / ${points(w.budgetPoints)}</span><span class="t2">&nbsp;&nbsp;余${points(w.remainingPoints)}</span><span class="sp"></span><span class="t3">点</span>` : `<span class="t4">点数待精确口径</span><span class="sp"></span>`}</div>
+      <div class="row mono small">${money}</div>
+      ${equiv}
+      <div class="row mono small"><span class="t3">⏱ </span><span class="t2 tick" data-reset="${w.resetAt}">${tick(w.resetAt - now)}</span>${b && b.trustworthy ? `<span class="t3">&nbsp;&nbsp;${b.percentPerHour.toFixed(2)}%/h</span>` : ''}<span class="sp"></span>${paceTxt}${eta}</div>
+    </div>`;
+  }
+
+  function ledgerCard(t) {
+    if (!t) return '';
+    const max = Math.max(...t.daily.map((d) => d.usd), 0.01);
+    const bars = t.daily.length >= 3 ? `<div class="bars" title="近 ${t.daily.length} 天逐日花费">${t.daily.map((d) => `<i style="height:${Math.max(1, d.usd / max * 15)}px" title="${(new Date(d.day).getMonth() + 1)}/${new Date(d.day).getDate()} ${usd(d.usd)} · ${d.count}次"></i>`).join('')}</div>` : '';
+    return `<div class="card ledger" title="花费只统计当前账号经 Mirasim 中转的调用，金额＝Mirasim 逐调用计量 × 本地价目表，非实付；周＝周一起，月＝1 号起。「额度」是等效折算：周额度＝7 天窗口整窗估值，月额度＝它 ÷7 × 当月天数。">
+      <div class="head"><span class="name">累计</span><span class="tag mono">本账号 · 经 Mirasim</span>${bars}<span class="big mono">${t.month.usd > 0 ? `<span class="t2" style="font-size:10px;font-weight:400">本月 </span>${usd(t.month.usd)}` : ''}</span></div>
+      <div class="row mono small"><span class="t3">周 </span><span class="t2">${usd(t.week.usd)}</span>${t.weekBudget ? `<span class="t3"> / 额度${usd(t.weekBudget)}</span>` : ''}<span class="t3"> · ${t.week.n.toLocaleString()}次</span><span class="sp"></span>${t.dayAverage ? `<span class="t3">日均${usd(t.dayAverage)}</span>` : ''}</div>
+      <div class="row mono small"><span class="t3">月 </span><span class="t2">${usd(t.month.usd)}</span>${t.monthBudget ? `<span class="t3"> / 额度${usd(t.monthBudget)}</span>` : ''}<span class="t3"> · ${t.month.n.toLocaleString()}次</span><span class="sp"></span>${t.monthProjection ? `<span class="t3">月底≈${usdPlain(t.monthProjection)}</span>` : ''}</div>
+    </div>`;
+  }
+
+  function speedCard(rows, t, now) {
+    const list = (rows || []).slice(0, 4).map((r) => {
+      const stale = now - r.lastAt > 90_000; const dim = stale || r.background;
+      return `<div class="row mono small ${dim ? 'dim' : ''}"><span class="bolt ${dim ? 'off' : ''}">⚡</span><span class="model">${esc(r.model)}</span>${r.background ? '<span class="xs t3" style="margin-right:6px">后台</span>' : ''}${r.tokensPerSecond ? `<span class="t2">${r.tokensPerSecond.toFixed(0)}</span><span class="t3">tok/s · </span>` : ''}<span class="t2">${r.medianSeconds.toFixed(1)}s</span><span class="t3">/轮</span>${!stale && r.firstSeconds ? `<span class="t3"> · 首字</span><span class="t2">${r.firstSeconds.toFixed(1)}s</span>` : ''}${stale ? `<span class="t3"> · ${ago(now - r.lastAt)}</span>` : ''}<span class="sp"></span></div>`;
+    }).join('');
+    const today = t && t.today.usd > 0 ? `<div class="row mono small"><span class="sp"></span><span class="t3">今日 </span><span class="t2">${usd(t.today.usd)}</span><span class="t3">/${t.today.n.toLocaleString()}次</span></div>` : '';
+    return (list || today) ? `<div class="card speed" title="速度＝Mirasim 记的端到端耗时 × Claude Code 账本的输出 token，按请求号精确配对；首字≈第一个内容块落盘时刻，是上界。行变暗＝该模型 90 秒内没有新请求。">${list}${today}</div>` : '';
+  }
+
+  function render() {
+    const d = data; const now = Date.now();
+    if (!d || !d.windows || !d.windows.length) {
+      const msg = { nomirasim: 'Mirasim 未运行', mismatch: '已连上 Mirasim，但读不懂额度帧', connecting: '连接 Mirasim 中…' }[d?.state] || '读不到额度';
+      $('#app').innerHTML = `<header><h1>Mirasim 遥测</h1></header><div class="empty">${esc(msg)}<br><span class="xs">读不到就说读不到，不推算</span></div>`;
+      return;
+    }
+    const a = d.account || {};
+    const exp = a.planExpiry ? `套餐到期 ${new Date(a.planExpiry).toISOString().slice(0, 10)}` : '';
+    $('#app').innerHTML = `
+      <header><h1>Mirasim 遥测</h1><span class="pill">${esc(d.stateLabel)}</span></header>
+      <div class="acct">${a.plan ? `<span class="plan">${esc(String(a.plan).toUpperCase())}</span>` : ''}<span>${esc(a.name || a.userId || '')}</span><span class="exp mono">${exp}</span></div>
+      ${d.windows.map((w) => windowCard(w, now)).join('')}
+      ${ledgerCard(d.totals)}
+      ${speedCard(d.speeds, d.totals, now)}
+      ${d.accountNotice ? `<div class="note warn">${esc(d.accountNotice)}</div>` : ''}
+      ${d.totals && d.totals.coverageWarning ? `<div class="note">${esc(d.totals.coverageWarning)}</div>` : ''}
+      <footer><span class="dot ${d.state === 'exact' || d.state === 'live' ? '' : d.state === 'stale' ? 'stale' : 'off'}"></span><b>${esc(d.stateLabel)}</b><span>·</span><span class="age" data-at="${d.capturedAt || d.generatedAt}">${ago(now - (d.capturedAt || d.generatedAt))}</span><span class="refresh" id="refresh">刷新</span></footer>`;
+    $('#refresh')?.addEventListener('click', () => fetch('/refresh', { method: 'POST' }).then(() => setTimeout(load, 800)));
+  }
+
+  async function load() {
+    try { const r = await fetch('/quota.json?t=' + Date.now(), { cache: 'no-store' }); data = await r.json(); render(); }
+    catch { $('#app').innerHTML = '<header><h1>Mirasim 遥测</h1></header><div class="empty">常驻脚本没在跑<br><span class="xs">node mirasim-telemetry.mjs</span></div>'; }
+  }
+  // 倒计时与「多久前」逐秒本地走，不必等新数据
+  setInterval(() => {
+    const now = Date.now();
+    document.querySelectorAll('.tick').forEach((el) => { el.textContent = tick(Number(el.dataset.reset) - now); });
+    document.querySelectorAll('.age').forEach((el) => { el.textContent = ago(now - Number(el.dataset.at)); });
+  }, 1000);
+  load();
+  setInterval(load, 5000);
+  // 截图/调试时加 ?nosse：常开的事件流会让无头浏览器一直等不到「网络空闲」
+  if (!location.search.includes('nosse')) { try { const es = new EventSource('/events'); es.addEventListener('update', load); } catch { /* 没 SSE 就靠 5 秒轮询 */ } }
+})();
+</script>
+</body>
+</html>

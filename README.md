@@ -120,7 +120,26 @@ perl scripts/points-audit/ptsfit3.pl usr_xxx   # Fable 5.1 按哪套权重扣点
 
 速度行、花费与点数在 Mirasim 流水文件一变就刷新（1.2–5 秒），额度点每 20 秒读一次，帧到即更新。
 
-## 装 / 卸
+## Windows / Linux：跨平台版
+
+[`node/`](node/) 下是同一套口径的 **Node 22+ 零依赖脚本**：后台算数据，面板是本机网页
+（`http://127.0.0.1:5990/`，可用 Edge/Chrome 应用窗口模式开成独立小窗），数据一变经 SSE 推到页面。
+Windows 特有的三处（找 Mirasim 进程、读会话令牌、开机自启）照 Windows 接口写成，**没有实机验证**；
+装好先跑 `--doctor`，哪一步没通它会说，怎么改见 [node/README.md](node/README.md)。
+
+<p align="center">
+<img src="docs/images/web-panel-dark.png" width="300" alt="网页面板 深色">
+&nbsp;&nbsp;
+<img src="docs/images/web-panel-light.png" width="300" alt="网页面板 浅色">
+</p>
+
+```powershell
+node node\mirasim-telemetry.mjs --doctor                          # 先自检
+node node\mirasim-telemetry.mjs --app                             # 起服务，应用窗口打开面板
+powershell -ExecutionPolicy Bypass -File node\install-windows.ps1  # 登录自启
+```
+
+## 装 / 卸（macOS 原生版）
 
 只需 **Command Line Tools**，不需要完整 Xcode（源码不用 `@State` 等宏，全部本地状态走 `ObservableObject`）。
 macOS 14 或更新。
@@ -161,7 +180,7 @@ bundle id 为 `local.eduhuan.ring`，偏好按它存；改了会丢掉调好的�
 
 ## 已知限制
 
-- 只有 macOS。数据契约（回环接口 + 本机文件）与平台无关，但界面是 AppKit/SwiftUI。
+- 原生面板只有 macOS；Windows / Linux 用 `node/` 下的跨平台版（网页面板，无法钉在最前，Windows 未实机验证）。
 - 首字≈ 是上界：本机没有逐请求的首 token 时刻，取的是第一个内容块落盘的时刻（思考型模型的第一块是整段思考）。
 - 本机只见本机的调用：同一账号在别的电脑上用，那边的花费不在账上，已花与整窗是下界。
 - 美元是按官方价目折算的等价额，不是账单。
