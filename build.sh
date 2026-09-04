@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 APP_NAME="Mirasim 遥测"
 # bundle id 保持不变：UserDefaults 按它存，改了会丢掉用户调好的位置/透明度/大小
 BUNDLE_ID="local.eduhuan.ring"
-VERSION="1.2.0"
+VERSION="1.3.0"
 OUT="${1:-build}"
 APP="$OUT/$APP_NAME.app"
 
@@ -32,6 +32,7 @@ xcrun swiftc \
   Sources/Calibrator.swift \
   Sources/Store.swift \
   Sources/Theme.swift \
+  Sources/EnglishStrings.swift \
   Sources/StatusIcon.swift \
   Sources/WindowCard.swift \
   Sources/CapsuleView.swift \

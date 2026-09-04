@@ -206,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let w = store.focusWindow, store.snapshot != nil else {
             button.image = StatusIcon.placeholder()
             button.title = ""
-            button.toolTip = "Mirasim 遥测 — 暂时读不到额度"
+            button.toolTip = L("Mirasim 遥测 — 暂时读不到额度")
             return
         }
         let stale = !store.isFresh
@@ -219,10 +219,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             button.title = ""
         }
-        var tip = "\(w.displayName)：已用 \(Fmt.percent(w.usedPercent, precision: w.precision))"
-        tip += "\n\(Fmt.duration(w.resetAt.timeIntervalSinceNow)) 后重置"
-        tip += "\n数据 \(Fmt.ago(store.snapshot?.age ?? 0))"
-        tip += "\n\n点一下：\(store.floatingVisible ? "收起" : "显示")"
+        var tip = L("\(w.displayName)：已用 \(Fmt.percent(w.usedPercent, precision: w.precision))", "\(w.displayName): \(Fmt.percent(w.usedPercent, precision: w.precision)) used")
+        tip += L("\n\(Fmt.duration(w.resetAt.timeIntervalSinceNow)) 后重置", "\nresets in \(Fmt.duration(w.resetAt.timeIntervalSinceNow))")
+        tip += L("\n数据 \(Fmt.ago(store.snapshot?.age ?? 0))", "\ndata \(Fmt.ago(store.snapshot?.age ?? 0))")
+        tip += L("\n\n点一下：", "\n\nClick: ") + (store.floatingVisible ? L("收起") : L("显示"))
         button.toolTip = tip
     }
 
@@ -267,44 +267,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let show = NSMenuItem(title: "显示悬浮窗", action: #selector(toggleMasterMenu), keyEquivalent: "")
+        let show = NSMenuItem(title: L("显示悬浮窗"), action: #selector(toggleMasterMenu), keyEquivalent: "")
         show.target = self
         show.state = store.floatingVisible ? .on : .off
         menu.addItem(show)
 
-        let modeItem = NSMenuItem(title: "显示为胶囊", action: #selector(toggleMode), keyEquivalent: "")
+        let modeItem = NSMenuItem(title: L("显示为胶囊"), action: #selector(toggleMode), keyEquivalent: "")
         modeItem.target = self
         modeItem.state = store.floatMode == .capsule ? .on : .off
         menu.addItem(modeItem)
 
-        let pierce = NSMenuItem(title: "鼠标穿透（停留 1 秒可操作）", action: #selector(toggleClickThrough), keyEquivalent: "")
+        let pierce = NSMenuItem(title: L("鼠标穿透（停留 1 秒可操作）"), action: #selector(toggleClickThrough), keyEquivalent: "")
         pierce.target = self
         pierce.state = store.clickThrough ? .on : .off
         menu.addItem(pierce)
 
-        let only = NSMenuItem(title: "只在 Mirasim 前台时显示", action: #selector(toggleOnlyInApp), keyEquivalent: "")
+        let only = NSMenuItem(title: L("只在 Mirasim 前台时显示"), action: #selector(toggleOnlyInApp), keyEquivalent: "")
         only.target = self
         only.state = store.onlyInMirasim ? .on : .off
         menu.addItem(only)
 
-        let top = NSMenuItem(title: "钉在最前", action: #selector(toggleTop), keyEquivalent: "")
+        let top = NSMenuItem(title: L("钉在最前"), action: #selector(toggleTop), keyEquivalent: "")
         top.target = self
         top.state = store.alwaysOnTop ? .on : .off
         menu.addItem(top)
 
-        let reset = NSMenuItem(title: "把悬浮窗移回右上角", action: #selector(resetPosition), keyEquivalent: "")
+        let reset = NSMenuItem(title: L("把悬浮窗移回右上角"), action: #selector(resetPosition), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
 
         menu.addItem(.separator())
 
-        let pct = NSMenuItem(title: "菜单栏显示百分比", action: #selector(togglePercent), keyEquivalent: "")
+        let pct = NSMenuItem(title: L("菜单栏显示百分比"), action: #selector(togglePercent), keyEquivalent: "")
         pct.target = self
         pct.state = store.showPercentInMenuBar ? .on : .off
         menu.addItem(pct)
 
         let follow = NSMenu()
-        let auto = NSMenuItem(title: "自动（剩得最少的）", action: #selector(pinWindow(_:)), keyEquivalent: "")
+        let auto = NSMenuItem(title: L("自动（剩得最少的）"), action: #selector(pinWindow(_:)), keyEquivalent: "")
         auto.target = self
         auto.representedObject = ""
         auto.state = store.pinnedWindow == nil ? .on : .off
@@ -319,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 follow.addItem(mi)
             }
         }
-        let followItem = NSMenuItem(title: "主要盯哪个窗口", action: nil, keyEquivalent: "")
+        let followItem = NSMenuItem(title: L("主要盯哪个窗口"), action: nil, keyEquivalent: "")
         menu.setSubmenu(follow, for: followItem)
         menu.addItem(followItem)
 
@@ -331,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             mi.state = store.size == sz ? .on : .off
             sizeMenu.addItem(mi)
         }
-        let sizeItem = NSMenuItem(title: "悬浮窗大小", action: nil, keyEquivalent: "")
+        let sizeItem = NSMenuItem(title: L("悬浮窗大小"), action: nil, keyEquivalent: "")
         menu.setSubmenu(sizeMenu, for: sizeItem)
         menu.addItem(sizeItem)
 
@@ -345,16 +345,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             zoomMenu.addItem(mi)
         }
         zoomMenu.addItem(.separator())
-        let zoomHint = NSMenuItem(title: "也可直接拖窗口边缘/角落", action: nil, keyEquivalent: "")
+        let zoomHint = NSMenuItem(title: L("也可直接拖窗口边缘/角落"), action: nil, keyEquivalent: "")
         zoomHint.isEnabled = false
         zoomMenu.addItem(zoomHint)
-        let zoomItem = NSMenuItem(title: "窗口缩放", action: nil, keyEquivalent: "")
+        let zoomItem = NSMenuItem(title: L("窗口缩放"), action: nil, keyEquivalent: "")
         menu.setSubmenu(zoomMenu, for: zoomItem)
         menu.addItem(zoomItem)
 
         let opMenu = NSMenu()
-        for (label, v) in [("不透明", 1.0), ("轻微透 85%", 0.85), ("半透明 70%", 0.7),
-                           ("很透 55%", 0.55), ("几乎隐形 40%", 0.4)] {
+        for (label, v) in [(L("不透明"), 1.0), (L("轻微透 85%"), 0.85), (L("半透明 70%"), 0.7),
+                           (L("很透 55%"), 0.55), (L("几乎隐形 40%"), 0.4)] {
             let mi = NSMenuItem(title: label, action: #selector(setOpacity(_:)), keyEquivalent: "")
             mi.target = self
             mi.representedObject = v
@@ -362,27 +362,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             opMenu.addItem(mi)
         }
         opMenu.addItem(.separator())
-        let hov = NSMenuItem(title: "鼠标移上去时变清晰", action: #selector(toggleClearOnHover), keyEquivalent: "")
+        let hov = NSMenuItem(title: L("鼠标移上去时变清晰"), action: #selector(toggleClearOnHover), keyEquivalent: "")
         hov.target = self
         hov.state = store.clearOnHover ? .on : .off
         opMenu.addItem(hov)
-        let opItem = NSMenuItem(title: "透明度", action: nil, keyEquivalent: "")
+        let opItem = NSMenuItem(title: L("透明度"), action: nil, keyEquivalent: "")
         menu.setSubmenu(opMenu, for: opItem)
         menu.addItem(opItem)
 
         menu.addItem(.separator())
 
-        let login = NSMenuItem(title: "开机自动启动", action: #selector(toggleLogin), keyEquivalent: "")
+        let login = NSMenuItem(title: L("开机自动启动"), action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = loginEnabled ? .on : .off
         menu.addItem(login)
 
-        let refresh = NSMenuItem(title: "立即刷新", action: #selector(refreshNow), keyEquivalent: "r")
+        let refresh = NSMenuItem(title: L("立即刷新"), action: #selector(refreshNow), keyEquivalent: "r")
         refresh.target = self
         menu.addItem(refresh)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "退出 Mirasim 遥测", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L("退出 Mirasim 遥测"), action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 

@@ -16,7 +16,7 @@
 - Node.js 22 或更新。`fetch` 与 `WebSocket` 从 22 起内置，不需要 npm install。
 - Mirasim 桌面版在本机运行。
 - 要显示原始点数和五位小数的百分比，需要有一个活跃的 Claude Code 会话，令牌从会话进程读取。
-  没有会话时使用 Mirasim 帧数据，分辩率 0.1%。
+  没有会话时使用 Mirasim 帧数据，分辨率 0.1%。
 
 ## 使用
 
@@ -24,6 +24,8 @@
 node mirasim-telemetry.mjs --doctor      # 自检：Mirasim 进程、端口、帧、会话令牌、/v1/limits、日志、账本
 node mirasim-telemetry.mjs               # 启动服务并在浏览器打开面板
 node mirasim-telemetry.mjs --app         # 用 Edge 或 Chrome 的应用窗口模式打开，没有地址栏
+node mirasim-telemetry.mjs --lang en     # 面板默认英文（页脚也能随时切换，记在浏览器里）
+node mirasim-telemetry.mjs --alert 80    # 提示区块的额度警戒线改成 80%（默认 90）
 ```
 
 开机自启会在「启动」文件夹放一个快捷方式，通过隐藏窗口启动脚本，不需要管理员权限：
@@ -58,13 +60,16 @@ node mirasim-telemetry.mjs --router-base http://127.0.0.1:端口/密钥 --router
 
 版面与 macOS 版相同：每个额度窗口一张卡（百分比、走势、进度条与匀速线、点数、已花 / 整窗 / 余量、
 7 天卡的等价行、倒计时与用尽时刻），累计卡（周、月、日均、月底预估、近 14 天柱状图），
-速度栏（每个模型的 tok/s、每轮耗时、首字时间，今日花费）。跟随系统的深浅色。
+速度栏（顶部活动条：近 1 小时每 5 分钟一格，绿成功红失败；每个模型的 tok/s、每轮耗时、首字时间，近 10 分钟撞过 429 的模型标「限流」；今日花费），
+会话卡（近 6 小时活跃的每个 Claude Code 会话：第一句话、整个会话累计的 token、美元、调用次数、最近调用时间），
+提示区块（越过警戒线、近 30 分钟失败 2 次以上、限流、用量未回填），可展开的最近 10 次调用。跟随系统的深浅色。
+页脚显示口径、数据时间、近 1 小时请求数与失败数，「EN / 中文」切换语言。
 数据变化时通过 SSE 推送到页面，倒计时在页面内每秒更新。
 
 浏览器窗口不能置顶。需要置顶时可以用 [PowerToys](https://learn.microsoft.com/windows/powertoys/) 的
 「Always On Top」功能（默认快捷键 Win+Ctrl+T）。
 
-其它接口：`/quota.json`（全部数据）、`/events`（SSE）、`POST /refresh`（让 Mirasim 忽略缓存重新查询一次）。
+其它接口：`/quota.json`（全部数据，含 `sessions` / `stats` / `recent` / `notices` 四个新字段，提示文案中英各一份）、`/events`（SSE）、`POST /refresh`（让 Mirasim 忽略缓存重新查询一次）。
 
 ## 数据与写入的文件
 

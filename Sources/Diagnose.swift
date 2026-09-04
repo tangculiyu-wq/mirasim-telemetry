@@ -122,6 +122,17 @@ enum Diagnose {
             }
         }
 
+        let sess = ledger.sessions(activeSince: Date().addingTimeInterval(-6 * 3600), userId: uid, limit: 5)
+        say("会话（近 6 小时活跃，整个会话累计）：\(sess.count) 个")
+        for s in sess {
+            let title = SessionTitles.title(session: s.id, workspace: s.workspace) ?? String(s.id.prefix(8))
+            let repo = (s.workspace as NSString?)?.lastPathComponent ?? "?"
+            let pend = s.pending > 0 ? "（\(s.pending) 待回填）" : ""
+            say("   \(title) · \(repo) · \(Fmt.tokens(s.tokens)) tok · $\(String(format: "%.2f", s.usd)) · \(s.calls) 次\(pend)")
+        }
+        let rs = ledger.requestStats(since: Date().addingTimeInterval(-3600), userId: uid)
+        let codes = rs.codes.sorted { $0.value > $1.value }.map { "\($0.key)×\($0.value)" }.joined(separator: " ")
+        say("近 1 小时请求：成功 \(rs.ok) · 失败 \(rs.failed)\(codes.isEmpty ? "" : "（\(codes)）")\(rs.rateLimited.isEmpty ? "" : " · 限流 " + rs.rateLimited.joined(separator: ","))")
         say("速度（本机实测）：\(SpeedStats.debug())")
         say("──────────────")
     }

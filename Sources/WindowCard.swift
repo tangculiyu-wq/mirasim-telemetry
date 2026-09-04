@@ -62,7 +62,7 @@ struct WindowCard: View {
                 Sparkline(points: history, color: accent)
                     .frame(height: 14)
                     .frame(maxWidth: 72)
-                    .hoverTip(tips, "近段用量走势（本机采样 \(history.count) 点，跨度在设置里调）")
+                    .hoverTip(tips, L("近段用量走势（本机采样 \(history.count) 点，跨度在设置里调）", "Recent usage trend (\(history.count) local samples; span in Settings)"))
             }
 
             Spacer(minLength: 2)
@@ -71,12 +71,12 @@ struct WindowCard: View {
             // 用户就是这么被绕进去的。超过 100% 时如实标「超」，
             // 那不是 bug：上游先记账后限流，Mirasim 的中继会兜底放行。
             if window.usedPercent > 100.05 {
-                Text(String(format: "超%.1f%%", window.usedPercent - 100))
+                Text(String(format: L("超%.1f%%"), window.usedPercent - 100))
                     .fixedSize()
                     .font(Theme.mono(10))
                     .foregroundStyle(accent)
             } else {
-                Text(String(format: "剩%.1f%%", window.remainingPercent))
+                Text(String(format: L("剩%.1f%%"), window.remainingPercent))
                     .fixedSize()
                     .font(Theme.mono(10))
                     .foregroundStyle(.secondary)
@@ -89,7 +89,7 @@ struct WindowCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .fixedSize()
-                .hoverTip(tips, "已用占预算的百分比＝上游 used ÷ budget 原始值。可以超过 100%——上游先记账后限流，超出部分由 Mirasim 中继兜底放行。")
+                .hoverTip(tips, L("已用占预算的百分比＝上游 used ÷ budget 原始值。可以超过 100%——上游先记账后限流，超出部分由 Mirasim 中继兜底放行。"))
         }
         .frame(height: 20)
     }
@@ -115,7 +115,6 @@ struct WindowCard: View {
                         .fill(Color.white.opacity(dark ? 0.75 : 0.9))
                         .frame(width: 2, height: 11)
                         .offset(x: min(geo.size.width - 2, geo.size.width * pace / 100))
-                        .animation(.easeInOut(duration: 0.4), value: pace)
                 }
             }
         }
@@ -137,13 +136,13 @@ struct WindowCard: View {
                     .foregroundStyle(.secondary)
                 Text(" / \(Fmt.points(budget))")
                     .foregroundStyle(.tertiary)
-                Text("  余\(Fmt.points(max(0, budget - used)))")
+                Text(L("  余\(Fmt.points(max(0, budget - used)))", "  \(Fmt.points(max(0, budget - used))) left"))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text("点")
+                Text(L("点"))
                     .foregroundStyle(.tertiary)
             } else {
-                Text("点数待精确口径")
+                Text(L("点数待精确口径"))
                     .foregroundStyle(.quaternary)
                 Spacer(minLength: 4)
             }
@@ -152,7 +151,7 @@ struct WindowCard: View {
         .lineLimit(1)
         .minimumScaleFactor(0.82)
         .frame(height: 14)
-        .hoverTip(tips, "已用点 / 预算点 · 剩余点＝上游 /v1/limits 的原始额度点，官方额度的真身。与下一行逐位对应：这些点折成美刀就是下面的 已花 / 整窗 / 余——点数预算固定不变，折出的美元随用法呼吸。")
+        .hoverTip(tips, L("已用点 / 预算点 · 剩余点＝上游 /v1/limits 的原始额度点，官方额度的真身。与下一行逐位对应：这些点折成美刀就是下面的 已花 / 整窗 / 余——点数预算固定不变，折出的美元随用法呼吸。"))
     }
 
     // MARK: 数据行一：钱
@@ -165,23 +164,23 @@ struct WindowCard: View {
                 if let f = c.fullUSD {
                     Text(" / \(Fmt.usd(f))")
                         .foregroundStyle(.tertiary)
-                    Text("  余\(Fmt.usd(max(0, f - c.spentUSD)))")
+                    Text(L("  余\(Fmt.usd(max(0, f - c.spentUSD)))", "  \(Fmt.usd(max(0, f - c.spentUSD))) left"))
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
                 if c.requests > 0 {
-                    Text("\(c.requests) 次")
+                    Text(L("\(c.requests) 次", "\(c.requests) calls"))
                         .foregroundStyle(.tertiary)
                 }
             } else if let c = cost, c.spentUSD > 0 {
                 // 单价标定还没收敛：已花是真账照给，整窗值宁缺勿假
                 Text(Fmt.usd(c.spentUSD)).foregroundStyle(.secondary)
-                Text("  额度标定中").foregroundStyle(.quaternary)
+                Text(L("  额度标定中")).foregroundStyle(.quaternary)
                 Spacer(minLength: 4)
-                if c.requests > 0 { Text("\(c.requests) 次").foregroundStyle(.tertiary) }
+                if c.requests > 0 { Text(L("\(c.requests) 次", "\(c.requests) calls")).foregroundStyle(.tertiary) }
             } else {
                 // 没有活跃会话时读不到点数，钱算不出——如实说，不留空行
-                Text("金额待精确口径")
+                Text(L("金额待精确口径"))
                     .foregroundStyle(.quaternary)
                 Spacer(minLength: 4)
             }
@@ -190,7 +189,7 @@ struct WindowCard: View {
         .lineLimit(1)
         .minimumScaleFactor(0.82)
         .frame(height: 14)
-        .hoverTip(tips, "已花 / 整窗约值 · 剩余可用 · 窗口内调用数。花费＝当前账号经中转的逐调用计量 × 本地价目表（与 Mirasim 流量监控页同源同价，断流重试也计）。整窗值＝本窗实花 ÷ 已用百分比逆推——已花、整窗、余量与卡上的百分比永远互相咬合。用法一变（模型混比、缓存读占比）单价就漂，整窗值跟着呼吸：它回答「照这个窗口里的用法，整窗能干多少活」。窗口早于本机计量起点、或已用还不足 12,000 点时，退按 7 天窗口均价 × 预算点折算。本机只见本机的调用——这个号若在别的电脑也在用，那边的花费不在账上，已花与整窗为下界。")
+        .hoverTip(tips, L("已花 / 整窗约值 · 剩余可用 · 窗口内调用数。花费＝当前账号经中转的逐调用计量 × 本地价目表（与 Mirasim 流量监控页同源同价，断流重试也计）。整窗值＝本窗实花 ÷ 已用百分比逆推——已花、整窗、余量与卡上的百分比永远互相咬合。用法一变（模型混比、缓存读占比）单价就漂，整窗值跟着呼吸：它回答「照这个窗口里的用法，整窗能干多少活」。窗口早于本机计量起点、或已用还不足 12,000 点时，退按 7 天窗口均价 × 预算点折算。本机只见本机的调用——这个号若在别的电脑也在用，那边的花费不在账上，已花与整窗为下界。"))
     }
 
     // MARK: 数据行一点五：整窗额度的等价美元
@@ -206,10 +205,10 @@ struct WindowCard: View {
     private var equivRow: some View {
         HStack(spacing: 0) {
             if let b = window.budgetPoints {
-                Text("\(Fmt.points(b)) 点 ≈ ").foregroundStyle(.quaternary)
+                Text(L("\(Fmt.points(b)) 点 ≈ ", "\(Fmt.points(b)) pts ≈ ")).foregroundStyle(.quaternary)
             }
             if let r = cost?.fullRegularUSD {
-                Text("普通模型 ").foregroundStyle(.tertiary)
+                Text(L("普通模型 ")).foregroundStyle(.tertiary)
                 Text(Fmt.usdPlain(r)).foregroundStyle(.secondary)
                 if cost?.fullFableUSD != nil { Text(" / ").foregroundStyle(.quaternary) }
             }
@@ -219,7 +218,7 @@ struct WindowCard: View {
                 // 用户 09-02：「5.1 不是便宜了吗，为什么还和 5 一样只能用一千来刀」——
                 // 同样的点、同样的活，按 Fable 5 标价是多少并排给出，一眼看出差的只是标价
                 if let f5 = cost?.fullFableAtF5USD {
-                    Text("（按 Fable 5 价 \(Fmt.usdPlain(f5))）").foregroundStyle(.quaternary)
+                    Text(L("（按 Fable 5 价 \(Fmt.usdPlain(f5))）", " (at Fable 5 price \(Fmt.usdPlain(f5)))")).foregroundStyle(.quaternary)
                 }
             }
             Spacer(minLength: 0)
@@ -232,14 +231,14 @@ struct WindowCard: View {
     }
 
     private var equivTip: String {
-        var s = "整窗额度换成钱的两个固定参照：全花在普通模型（Opus/Sonnet 等非 Fable）上值多少，全花在 Fable 5.1 上值多少。"
+        var s = L("整窗额度换成钱的两个固定参照：全花在普通模型（Opus/Sonnet 等非 Fable）上值多少，全花在 Fable 5.1 上值多少。")
         if let b = window.budgetPoints, b > 0 {
             var parts: [String] = []
-            if let r = cost?.fullRegularUSD { parts.append(String(format: "普通模型每点 ≈ $%.4f", r / b)) }
-            if let f = cost?.fullFableUSD { parts.append(String(format: "Fable 5.1 每点 ≈ $%.4f", f / b)) }
-            if !parts.isEmpty { s += "本窗口实测：" + parts.joined(separator: "，") + "。" }
+            if let r = cost?.fullRegularUSD { parts.append(String(format: L("普通模型每点 ≈ $%.4f"), r / b)) }
+            if let f = cost?.fullFableUSD { parts.append(String(format: L("Fable 5.1 每点 ≈ $%.4f"), f / b)) }
+            if !parts.isEmpty { s += L("本窗口实测：") + parts.joined(separator: "，") + L("。") }
         }
-        s += "点的扣法（09-02 实测）：普通模型每 $1 标价扣 100 点；Fable 每 $1 Fable 5 标价扣 200 点，5.1 也按 5 的价目扣，不因标价便宜而少扣。所以 5.1 的美元数比 5 小，是同样的活按 5.1 标价更便宜，不是额度变少——同样的点在 5.1 上能跑的 token 与 5 一样多。Fable 调用同时扣 7 天窗与 Fable 窗，普通模型只扣 7 天窗，据此拆开各配各的钱；历史 Fable 5 调用已按 5.1 价目重算（以后只用 5.1）。"
+        s += L("点的扣法（09-02 实测）：普通模型每 $1 标价扣 100 点；Fable 每 $1 Fable 5 标价扣 200 点，5.1 也按 5 的价目扣，不因标价便宜而少扣。所以 5.1 的美元数比 5 小，是同样的活按 5.1 标价更便宜，不是额度变少——同样的点在 5.1 上能跑的 token 与 5 一样多。Fable 调用同时扣 7 天窗与 Fable 窗，普通模型只扣 7 天窗，据此拆开各配各的钱；历史 Fable 5 调用已按 5.1 价目重算（以后只用 5.1）。")
         return s
     }
 
@@ -267,13 +266,13 @@ struct WindowCard: View {
 
                 if let delta = window.paceDelta {
                     // 用词避开「落后」这种要在心里绕一圈的说法：比匀速慢就是「省」
-                    Text(String(format: "匀速%@%.0f%%", delta <= 0 ? "省" : "快", abs(delta)))
+                    Text(String(format: L("匀速%@%.0f%%"), delta <= 0 ? L("省") : L("快"), abs(delta)))
                         .foregroundStyle(delta <= 0 ? Color.secondary
                                                     : Theme.accent(min(1, 0.62 + abs(delta) / 120), dark: dark).0)
                 }
 
                 if let b = burn, let eta = b.exhaustAt, eta < window.resetAt, !window.isExhausted {
-                    Text("  \(Fmt.clockTight(eta))尽")
+                    Text(L("  \(Fmt.clockTight(eta))尽", "  out \(Fmt.clockTight(eta))"))
                         .foregroundStyle(Theme.accent(0.95, dark: dark).0)
                 }
             }
@@ -282,7 +281,7 @@ struct WindowCard: View {
             .minimumScaleFactor(0.78)
             .frame(height: 14)
         }
-        .hoverTip(tips, "重置倒计时 · 每小时消耗（近 6 小时实测斜率）· 相对匀速线 · 耗尽预告（速率不可信时不给）")
+        .hoverTip(tips, L("重置倒计时 · 每小时消耗（近 6 小时实测斜率）· 相对匀速线 · 耗尽预告（速率不可信时不给）"))
     }
 }
 
@@ -319,16 +318,16 @@ struct LedgerCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .center, spacing: 8) {
-                Text("累计")
+                Text(L("累计"))
                     .font(Theme.label(13, .semibold))
                     .fixedSize()
                 // 用户看着「周 5,628 次」问「这个就显示当前账号的就行了吧」——数据一直是
                 // 只算当前账号的，但卡上只写了「仅经 Mirasim」，看不出账号范围。把范围写明。
-                Text("本账号 · 经 Mirasim")
+                Text(L("本账号 · 经 Mirasim"))
                     .font(Theme.mono(9))
                     .foregroundStyle(.quaternary)
                     .fixedSize()
-                    .hoverTip(tips, "只算当前登录账号（顶栏那个名字）经 Mirasim 中转的调用；切换账号后这里自动跟随，别的账号的流水不混进来；其他电脑、直连 API 的用量不在内。")
+                    .hoverTip(tips, L("只算当前登录账号（顶栏那个名字）经 Mirasim 中转的调用；切换账号后这里自动跟随，别的账号的流水不混进来；其他电脑、直连 API 的用量不在内。"))
 
                 if daily.count >= 3 {
                     SparkBars(values: daily.map(\.usd), color: neutral,
@@ -336,7 +335,7 @@ struct LedgerCard: View {
                               onHover: quietHover ? nil : { barHover.idx = $0 })
                         .frame(height: 15)
                         .frame(maxWidth: 104)
-                        .hoverTip(tips, "近 \(daily.count) 天逐日花费，指到柱上看单日明细")
+                        .hoverTip(tips, L("近 \(daily.count) 天逐日花费，指到柱上看单日明细", "Daily spend over the last \(daily.count) days; hover a bar for details"))
                 }
 
                 Spacer(minLength: 2)
@@ -346,7 +345,7 @@ struct LedgerCard: View {
                 if let i = barHover.idx, i < daily.count {
                     let d = daily[i]
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text("\(Fmt.monthDay(d.day)) · \(d.count)次")
+                        Text(L("\(Fmt.monthDay(d.day)) · \(d.count)次", "\(Fmt.monthDay(d.day)) · \(d.count) calls"))
                             .font(Theme.mono(8.5))
                             .foregroundStyle(.tertiary)
                         Text(Fmt.usd(d.usd))
@@ -355,7 +354,7 @@ struct LedgerCard: View {
                     }
                     .fixedSize()
                 } else if let m = month {
-                    Text("本月")
+                    Text(L("本月"))
                         .font(Theme.mono(10))
                         .foregroundStyle(.secondary)
                         .fixedSize()
@@ -371,15 +370,15 @@ struct LedgerCard: View {
 
             if !terse {
                 HStack(spacing: 0) {
-                    Text("周 ").foregroundStyle(.tertiary)
+                    Text(L("周 ")).foregroundStyle(.tertiary)
                     Text(Fmt.usd(week?.spentUSD ?? 0)).foregroundStyle(.secondary)
                     if let b = weekBudget {
-                        Text(" / 额度\(Fmt.usd(b))").foregroundStyle(.tertiary)
+                        Text(L(" / 额度\(Fmt.usd(b))", " / \(Fmt.usd(b))")).foregroundStyle(.tertiary)
                     }
-                    Text(" · \(week?.requests ?? 0)次").foregroundStyle(.tertiary)
+                    Text(L(" · \(week?.requests ?? 0)次", " · \(week?.requests ?? 0)×")).foregroundStyle(.tertiary)
                     Spacer(minLength: 4)
                     if let w = week, let avg = dayAverage(of: w, since: .week) {
-                        Text("日均\(Fmt.usd(avg))").foregroundStyle(.tertiary)
+                        Text(L("日均\(Fmt.usd(avg))", "\(Fmt.usd(avg))/day")).foregroundStyle(.tertiary)
                     }
                 }
                 .font(Theme.mono(10.5))
@@ -388,15 +387,15 @@ struct LedgerCard: View {
                 .frame(height: 14)
 
                 HStack(spacing: 0) {
-                    Text("月 ").foregroundStyle(.tertiary)
+                    Text(L("月 ")).foregroundStyle(.tertiary)
                     Text(Fmt.usd(month?.spentUSD ?? 0)).foregroundStyle(.secondary)
                     if let b = monthBudget {
-                        Text(" / 额度\(Fmt.usd(b))").foregroundStyle(.tertiary)
+                        Text(L(" / 额度\(Fmt.usd(b))", " / \(Fmt.usd(b))")).foregroundStyle(.tertiary)
                     }
-                    Text(" · \(month?.requests ?? 0)次").foregroundStyle(.tertiary)
+                    Text(L(" · \(month?.requests ?? 0)次", " · \(month?.requests ?? 0)×")).foregroundStyle(.tertiary)
                     Spacer(minLength: 4)
                     if let proj = monthProjection() {
-                        Text("月底≈\(Fmt.usdPlain(proj))")
+                        Text(L("月底≈\(Fmt.usdPlain(proj))", "EOM ≈\(Fmt.usdPlain(proj))"))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -415,7 +414,7 @@ struct LedgerCard: View {
         )
         .contentShape(Rectangle())
         .onHover { hover.on = $0 }
-        .hoverTip(tips, "花费只统计当前账号经中转的调用，金额＝Mirasim 逐调用计量 × 本地价目表（与流量监控页同口径），非实付；周＝周一起，月＝1 号起。「额度」是等效折算：官方只有滚动窗口、没有固定周/月总额——周额度＝7 天窗口整窗估值，月额度＝它 ÷7 × 当月天数，都带 ≈。")
+        .hoverTip(tips, L("花费只统计当前账号经中转的调用，金额＝Mirasim 逐调用计量 × 本地价目表（与流量监控页同口径），非实付；周＝周一起，月＝1 号起。「额度」是等效折算：官方只有滚动窗口、没有固定周/月总额——周额度＝7 天窗口整窗估值，月额度＝它 ÷7 × 当月天数，都带 ≈。"))
     }
 
     private enum Span { case week }

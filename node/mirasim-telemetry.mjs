@@ -24,7 +24,7 @@ import { homedir, platform, userInfo } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOME = homedir();
 const STATE_DIR = join(HOME, '.mirasim-telemetry');
@@ -56,7 +56,9 @@ if (flag('help') || flag('h')) {
   --channel-port <N>    mirachannel 端口（默认从 Mirasim 进程命令行解析，回退 4970–4980 扫描）
   --router-base <URL>   直接给 /v1/limits 的基址（形如 http://127.0.0.1:12345/<密钥>），跳过进程扫描
   --router-token <T>    该基址的会话令牌（等价环境变量 MIRASIM_TELEMETRY_TOKEN）
-  --user <usr_...>      强制按该账号统计（默认跟随 Mirasim 当前登录账号）`);
+  --user <usr_...>      强制按该账号统计（默认跟随 Mirasim 当前登录账号）
+  --alert <N>           提示区块的额度警戒线，百分比（默认 90）
+  --lang zh|en          网页面板默认语言（默认跟浏览器语言；页脚可随时切换）`);
   process.exit(0);
 }
 
@@ -350,7 +352,7 @@ const FIRST_PARTY = ['anthropic', 'openai', 'google', 'deepseek', 'xai', 'moonsh
 const canonicalProvider = (p) => { let s = String(p || '').toLowerCase(); for (const suf of ['-responses', '-chat', '-completions', '-compat', '-messages']) if (s.endsWith(suf)) { s = s.slice(0, -suf.length); break; } return s; };
 
 class Ledger {
-  constructor() { this.entries = []; this.unmetered = []; this.files = new Map(); this.catalog = new Map(); this.catalogStamp = null; this.rateCache = new Map(); this._serviceStart = undefined; }
+  constructor() { this.entries = []; this.unmetered = []; this.recent = []; this.files = new Map(); this.catalog = new Map(); this.catalogStamp = null; this.rateCache = new Map(); this._serviceStart = undefined; }
   loadCatalogIfChanged() {
     let st; try { st = statSync(CATALOG_FILE); } catch { return false; }
     const stamp = st.size + ':' + st.mtimeMs;
@@ -416,7 +418,8 @@ class Ledger {
       let st; try { st = statSync(path); } catch { continue; }
       const c = this.files.get(name);
       if (c && c.size === st.size && c.mtime === st.mtimeMs) continue;
-      const es = [], um = [];
+      const es = [], um = [], rc = [];
+      const recentHorizon = Date.now() - 24 * 3600_000;
       let text; try { text = readFileSync(path, 'utf8'); } catch { continue; }
       for (const line of text.split('\n')) {
         if (!line.includes('"leg":"relay"')) continue;
@@ -424,21 +427,26 @@ class Ledger {
         if (o.leg !== 'relay' || !o.id) continue;
         const at = toMs(o.ts); if (at == null || at < horizon) continue;
         const input = num(o.input) ?? 0, output = num(o.output) ?? 0, read = num(o.cacheRead) ?? 0, write = num(o.cacheWrite) ?? 0;
-        const user = o.userId ?? null;
-        if (input + output + read + write <= 0) { if (o.status === 200) um.push({ at, user }); continue; }
+        const user = o.userId ?? null, session = o.sessionId ?? null, workspace = o.workspace ?? null;
+        const status = num(o.status) ?? 0, durationMs = num(o.durationMs) ?? 0, agent = o.agent || '?';
         const model = o.model || '';
-        const r = this.rate(o.provider || 'anthropic', model);
-        const usd = (input * r[0] + output * r[1] + read * r[2] + write * r[3]) / 1e6;
+        const tokens = input + output + read + write;
+        let usd = 0;
+        if (tokens > 0) { const r = this.rate(o.provider || 'anthropic', model); usd = (input * r[0] + output * r[1] + read * r[2] + write * r[3]) / 1e6; }
+        // 近 24 小时每次调用都记一笔（含失败与未回填），供活动条、失败统计与「最近调用」
+        if (at >= recentHorizon) rc.push({ id: o.id, at, model, status, durationMs, tokens, usd, session, workspace, user, agent });
+        if (tokens <= 0) { if (status === 200) um.push({ at, user, session }); continue; }
         if (usd <= 0) continue;
-        es.push({ id: o.id, at, usd, model, user, input, output, read, write });
+        es.push({ id: o.id, at, usd, model, user, input, output, read, write, session, workspace });
       }
-      this.files.set(name, { size: st.size, mtime: st.mtimeMs, entries: es, unmetered: um });
+      this.files.set(name, { size: st.size, mtime: st.mtimeMs, entries: es, unmetered: um, recent: rc });
       changed = true;
     }
     for (const k of [...this.files.keys()]) if (!wanted.includes(k)) { this.files.delete(k); changed = true; }
     if (!changed) return false;
     this.entries = wanted.flatMap((n) => this.files.get(n)?.entries || []);
     this.unmetered = wanted.flatMap((n) => this.files.get(n)?.unmetered || []);
+    this.recent = wanted.flatMap((n) => this.files.get(n)?.recent || []);
     return true;
   }
   /** 花费与次数；modelGroup 为模型名子串过滤（fable / claude），userId 只算该账号 */
@@ -470,6 +478,72 @@ class Ledger {
     for (const u of this.unmetered) if (u.at >= since && (!userId || u.user === userId)) unmetered++;
     return { metered, unmetered };
   }
+  /** 会话卡：按 Claude Code 会话号归并，整个会话累计（不限窗口），只取 activeSince 之后还有调用的 */
+  sessions(activeSince, userId, limit = 5) {
+    const acc = new Map();
+    for (const e of this.entries) {
+      if (!e.session || (userId && e.user !== userId)) continue;
+      let s = acc.get(e.session);
+      if (!s) { s = { id: e.session, workspace: e.workspace, usd: 0, calls: 0, pending: 0, input: 0, output: 0, read: 0, write: 0, firstAt: e.at, lastAt: e.at, models: new Map() }; acc.set(e.session, s); }
+      s.usd += e.usd; s.calls++; s.input += e.input; s.output += e.output; s.read += e.read; s.write += e.write;
+      if (e.at < s.firstAt) s.firstAt = e.at;
+      if (e.at > s.lastAt) s.lastAt = e.at;
+      if (e.workspace && !s.workspace) s.workspace = e.workspace;
+      s.models.set(e.model, (s.models.get(e.model) || 0) + 1);
+    }
+    for (const u of this.unmetered) {
+      if (!u.session || (userId && u.user !== userId)) continue;
+      const s = acc.get(u.session); if (s) { s.pending++; if (u.at > s.lastAt) s.lastAt = u.at; }
+    }
+    return [...acc.values()].filter((s) => s.lastAt >= activeSince).sort((a, b) => b.lastAt - a.lastAt).slice(0, limit)
+      .map((s) => ({ ...s, tokens: s.input + s.output + s.read + s.write, models: [...s.models.entries()].sort((a, b) => b[1] - a[1]), title: sessionTitle(s.id, s.workspace) }));
+  }
+  /** since 起的请求成败：成功/失败数、失败码分布、按格分桶、近 10 分钟撞过 429 的模型 */
+  requestStats(since, userId, buckets = 12) {
+    const now = Date.now(); const span = Math.max(1, now - since);
+    const out = { ok: 0, failed: 0, codes: {}, rateLimited: [], buckets: Array.from({ length: buckets }, () => ({ ok: 0, failed: 0 })) };
+    for (const r of this.recent) {
+      if (r.at < since || (userId && r.user !== userId)) continue;
+      const i = Math.min(buckets - 1, Math.max(0, Math.floor((r.at - since) / span * buckets)));
+      if (r.status === 200) { out.ok++; out.buckets[i].ok++; continue; }
+      out.failed++; out.buckets[i].failed++; out.codes[r.status] = (out.codes[r.status] || 0) + 1;
+      if (r.status === 429 && now - r.at < 600_000 && !out.rateLimited.includes(r.model)) out.rateLimited.push(r.model);
+    }
+    return out;
+  }
+  recentCalls(limit, userId) {
+    return this.recent.filter((r) => !userId || r.user === userId).sort((a, b) => b.at - a.at).slice(0, limit);
+  }
+}
+
+/** 会话标题：Claude Code 账本里该会话的第一句用户话（≤30 字）；找不到给 null，面板退回仓库名或会话号 */
+const titleCache = new Map();
+function sessionTitle(sid, workspace) {
+  if (!sid) return null;
+  if (titleCache.has(sid)) return titleCache.get(sid);
+  const candidates = [];
+  if (workspace) candidates.push(join(CLAUDE_PROJECTS, workspace.replace(/[\\/:.]/g, '-'), sid + '.jsonl'));   // Claude Code 的项目目录名＝路径里的分隔符与点换成 -
+  let dirs = []; try { dirs = readdirSync(CLAUDE_PROJECTS); } catch { /* 没有账本 */ }
+  for (const d of dirs) candidates.push(join(CLAUDE_PROJECTS, d, sid + '.jsonl'));
+  let title = null;
+  for (const p of candidates) {
+    if (!existsSync(p)) continue;
+    let head = '';
+    try { const fd = openSync(p, 'r'); const buf = Buffer.alloc(98304); const n = readSync(fd, buf, 0, 98304, 0); closeSync(fd); head = buf.toString('utf8', 0, n); } catch { continue; }
+    for (const line of head.split('\n')) {
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      if (o.type !== 'user' || o.isMeta) continue;
+      const c = o.message?.content;
+      let t = typeof c === 'string' ? c : Array.isArray(c) ? (c.find((x) => x.type === 'text')?.text ?? '') : '';
+      t = t.trim().replace(/\s+/g, ' ');
+      if (!t || t.startsWith('<') || t.startsWith('[Request interrupted')) continue;
+      title = t.length > 30 ? t.slice(0, 30) + '…' : t; break;
+    }
+    if (title) break;
+  }
+  if (titleCache.size > 300) titleCache.clear();
+  titleCache.set(sid, title);
+  return title;
 }
 
 /* ---------------- 速度：Mirasim 耗时 × Claude Code 账本 token，按请求号精确配对 ---------------- */
@@ -647,6 +721,23 @@ function equivalentRates(windows, uid) {
   return { regular, fable };
 }
 
+const LABEL_EN = { exact: 'Exact', live: 'Live', stale: 'Stale', nomirasim: 'Mirasim not running', mismatch: 'Bad frame', connecting: 'Connecting' };
+function labelEnOf(name) {
+  const fixed = { '5h': '5 hours', '7d': '7 days', '7d_fable': '7 days · Fable 5.1' };
+  if (fixed[name]) return fixed[name];
+  const [head, ...rest] = name.split('_'); const m = /^(\d+)([hdmw])$/.exec(head);
+  const unit = m ? { h: 'hour', d: 'day', m: 'min', w: 'week' }[m[2]] : null;
+  const base = m ? `${m[1]} ${unit}${unit !== 'min' && m[1] !== '1' ? 's' : ''}` : head;
+  return rest.length ? base + ' · ' + rest.join(' ') : base;
+}
+/** 时长的中英两种读法，最多两级 */
+function durationText(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000)); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  const zh = d ? `${d} 天${h ? ` ${h} 小时` : ''}` : h ? `${h} 小时${m ? ` ${m} 分钟` : ''}` : m ? `${m} 分钟` : `${s} 秒`;
+  const en = d ? `${d} d${h ? ` ${h} h` : ''}` : h ? `${h} h${m ? ` ${m} min` : ''}` : m ? `${m} min` : `${s} s`;
+  return { zh, en };
+}
+
 function compute() {
   const snap = snapshot();
   const L = state.ledger;
@@ -709,7 +800,7 @@ function compute() {
       const trendBack = 2 * 3600_000;
       const trend = state.samples.filter((s) => s.window === w.name && s.user === uid && now - s.at < trendBack).map((s) => [Math.round(s.at / 1000), +s.percent.toFixed(3)]);
       const pace = span != null ? Math.min(100, Math.max(0, (now - start) / (span * 1000) * 100)) : null;
-      windows.push({ name: w.name, label: labelOf(w.name), usedPercent: w.usedPercent, usedPoints: w.usedPoints, budgetPoints: w.budgetPoints,
+      windows.push({ name: w.name, label: labelOf(w.name), labelEn: labelEnOf(w.name), usedPercent: w.usedPercent, usedPoints: w.usedPoints, budgetPoints: w.budgetPoints,
         remainingPoints: w.usedPoints != null ? Math.max(0, w.budgetPoints - w.usedPoints) : null, resetAt: w.resetAt, windowStart: start,
         pacePercent: pace, paceDelta: pace != null ? w.usedPercent - pace : null, modelScoped: w.modelScoped, modelGroup: w.modelScoped ? group : null,
         precision: w.precision, upstreamStatus: w.upstreamStatus, cost, burn, trend: trend.filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 120)) === 0) });
@@ -738,11 +829,43 @@ function compute() {
       coverageWarning: (gap.unmetered >= 20 && gap.unmetered > (gap.metered + gap.unmetered) * 0.05) ? `近 24 小时有 ${gap.unmetered} 次调用还没回填用量，已花是下界` : null };
   }
 
+  // 会话卡 / 请求成败 / 最近调用 / 提示区块（中英各一份文案，页面按语言取）
+  const sessions = uid ? L.sessions(now - 6 * 3600_000, uid, 5) : [];
+  const stats = L.requestStats(now - 3600_000, uid, 12);
+  const recent = L.recentCalls(10, uid);
   const flags = snap?.flags || {};
+  const accountNotice = flags.suspended ? { zh: '账号被暂停，额度数字仅供参考', en: 'Account suspended; quota figures are indicative only' }
+    : flags.unmetered ? { zh: '账号不计量，额度上限不适用', en: 'Account is unmetered; quota caps do not apply' }
+    : flags.degraded ? { zh: '上游降级运行中', en: 'Upstream is running degraded' } : null;
+  const notices = [];
+  const alertAt = Number(opt('alert', 90)) || 90;
+  for (const w of windows) {
+    if (w.usedPercent < alertAt) continue;
+    const left = durationText(w.resetAt - now);
+    notices.push(w.usedPercent >= 100
+      ? { level: 2, zh: `${w.label} 已用满，${left.zh} 后重置`, en: `${w.labelEn} exhausted, resets in ${left.en}` }
+      : { level: 1, zh: `${w.label} 已用 ${w.usedPercent.toFixed(0)}%，${left.zh} 后重置`, en: `${w.labelEn} ${w.usedPercent.toFixed(0)}% used, resets in ${left.en}` });
+  }
+  const failed30 = L.recent.filter((r) => r.at >= now - 1800_000 && (!uid || r.user === uid) && r.status !== 200).length;
+  if (failed30 >= 2) {
+    const codes = Object.entries(stats.codes).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c}×${n}`).join(' ');
+    notices.push({ level: 1, zh: `近 30 分钟 ${failed30} 次请求失败（近 1 小时错误码 ${codes}）`, en: `${failed30} failed requests in the last 30 min (1h codes: ${codes})` });
+  }
+  if (stats.rateLimited.length) {
+    const names = stats.rateLimited.map(prettyModel);
+    notices.push({ level: 1, zh: `限流中：${names.join('、')} 近 10 分钟有 429`, en: `Rate limited: ${names.join(', ')} returned 429 in the last 10 min` });
+  }
+  if (accountNotice) notices.push({ level: 1, ...accountNotice });
+  if (totals?.coverageWarning) {
+    const gap = L.backfillGap(now - 86400_000, uid);
+    notices.push({ level: 0, zh: totals.coverageWarning, en: `${gap.unmetered} calls in the last 24h have no usage backfilled yet; spent is a lower bound` });
+  }
+  notices.sort((a, b) => b.level - a.level);
   state.result = {
-    version: VERSION, generatedAt: now, state: level, stateLabel: LABEL[level], precision: snap?.precision ?? null,
-    capturedAt: snap?.capturedAt ?? null, account: snap?.account ?? null, accountNotice: flags.suspended ? '账号被暂停，额度数字仅供参考' : flags.unmetered ? '账号不计量，额度上限不适用' : flags.degraded ? '上游降级运行中' : null,
+    version: VERSION, generatedAt: now, state: level, stateLabel: LABEL[level], stateLabelEn: LABEL_EN[level], precision: snap?.precision ?? null,
+    capturedAt: snap?.capturedAt ?? null, account: snap?.account ?? null, accountNotice: accountNotice?.zh ?? null,
     windows, totals, speeds: state.speeds.rows, pairing: { paired: state.speeds.paired, probed: state.speeds.probed }, channelPort: state.relay.port,
+    sessions, stats, recent, notices, lang: opt('lang', null),
   };
   for (const fn of state.listeners) fn();
   return state.result;

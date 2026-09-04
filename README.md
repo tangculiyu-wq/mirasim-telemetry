@@ -1,5 +1,7 @@
 # Mirasim 遥测
 
+中文 · [English](README.en.md)
+
 macOS 上的 Mirasim 额度仪表。它由一个悬浮面板和一个菜单栏图标组成：面板常驻桌面，可以贴在 Mirasim 窗口的角上；
 菜单栏图标按剩余额度变色。程序只读取本机回环接口和本机日志文件，不向 Mirasim 注入代码，不需要调试端口，
 不修改 Mirasim 的任何文件。
@@ -10,11 +12,9 @@ macOS 上的 Mirasim 额度仪表。它由一个悬浮面板和一个菜单栏�
 <img src="docs/images/panel-light.png" width="360" alt="浅色面板">
 </p>
 
-> An unofficial quota dashboard for the Mirasim desktop client on macOS. It reads the client's
-> local loopback endpoints and local usage logs only. No CDP injection, no debug port, no file
-> patching. Shows 5h / 7d / 7d·Fable windows with raw points, USD equivalents, burn rate,
-> per-model speed, and weekly/monthly spend. Not affiliated with Mirasim or Anthropic.
-> Documentation is in Chinese.
+> An unofficial quota dashboard for the Mirasim desktop client. The interface is available in
+> English (Settings › Language); the English documentation is in [README.en.md](README.en.md).
+> Not affiliated with Mirasim or Anthropic.
 
 ## 快速开始
 
@@ -60,13 +60,25 @@ node node\mirasim-telemetry.mjs --app        # 启动，并在浏览器应用窗
 日均花费、月底预估。最后是速度栏：近期使用的每个模型各一行，显示 tok/s、每轮耗时中位数、首字时间，
 子代理的调用也计入。今日花费与调用次数显示在右下角。
 
+速度栏顶部是**活动条**：近 1 小时的请求，每格 5 分钟，绿色是成功，红色是失败（429、5xx、超时），
+悬停显示次数与错误码分布。某个模型近 10 分钟撞过 429 时，它那一行的模型名后面标「限流」。
+
+速度栏下面是**会话卡**：近 6 小时有调用的每个 Claude Code 会话各一行。名字取该会话的第一句话，
+没有账本时用仓库名或会话号；后面是整个会话累计的 token、美元、调用次数和最近一次调用距今的时间，
+点亮的圆点表示 2 分钟内有调用。悬停显示输入 / 输出 / 缓存读 / 缓存写的 token、模型分布，以及还没回填用量的调用次数。
+会话卡可以在设置里关掉。
+
+会话卡下面是**提示区块**，只在有事时出现：某个窗口越过警戒线（已用满为红色）、近 30 分钟失败 2 次以上、限流、
+两路口径读数不一致、近 24 小时有用量没回填。页脚显示口径、数据时间和近 1 小时的请求数，有失败时用红色标出失败次数。
+
 <p align="center">
 <img src="docs/images/panel-dark-detail.png" width="360" alt="展开明细：耗尽预演与口径">
 &nbsp;&nbsp;
 <img src="docs/images/capsule-dark.png" width="200" alt="胶囊形态">
 </p>
 
-「大」尺寸下还显示明细：各窗口的用尽时刻、数据来源、分辨率、上游采集时刻、预算口径、账号与套餐。
+「大」尺寸下还显示明细：各窗口的用尽时刻、最近 10 次调用（时刻、模型、状态、耗时、token、金额）、
+数据来源、分辨率、上游采集时刻、预算口径、账号与套餐。
 收成胶囊后只显示一个小图标和主窗口的百分比，可以停在屏幕顶边，点一下展开。
 
 ## 准确性上的三条原则
@@ -143,7 +155,8 @@ perl scripts/points-audit/ptsfit3.pl usr_xxx   # 检验 Fable 5.1 按哪套权�
 - **右键**面板或菜单栏图标打开菜单：显示 / 胶囊 / 穿透 / 只在 Mirasim 前台时显示 / 钉在最前 / 移回右上角 /
   菜单栏百分比 / 主要显示哪个窗口 / 大小 / 缩放 / 透明度 / 开机自启 / 刷新 / 退出。
 - **设置**（齿轮）：内容缩放、钉在最前、只在 Mirasim 里显示、嵌入位置、鼠标穿透、外观（跟随系统 / 深 / 浅）、
-  菜单栏百分比与显示哪个窗口、额度警报与警戒线（50%–99%）、走势线跨度、开机自启、重置窗口位置、重扫账本。
+  语言（跟随系统 / 中文 / English）、会话卡开关、菜单栏百分比与显示哪个窗口、额度警报与警戒线（50%–99%）、
+  走势线跨度、开机自启、重置窗口位置、重扫账本。
 - 菜单栏图标显示剩余最少的窗口（可在设置里改）。左键点击显示或隐藏面板。
 
 Mirasim 日志文件有变化时，速度、花费与点数在 1.2 到 5 秒内刷新。额度点每 20 秒读取一次，帧数据到达时立即更新。
@@ -152,6 +165,8 @@ Mirasim 日志文件有变化时，速度、花费与点数在 1.2 到 5 秒内�
 
 [`node/`](node/) 目录下是同一套口径的 Node 22+ 脚本，没有外部依赖。脚本在后台计算数据，面板是本机网页
 （`http://127.0.0.1:5990/`，可以用 Edge 或 Chrome 的应用窗口模式打开）。数据变化时通过 SSE 推送到页面。
+面板内容与 macOS 版相同，包括活动条、会话卡、提示区块和可展开的最近调用；页脚可以切换中英文，
+`--lang en` 设默认语言，`--alert 80` 改提示区块的警戒线。
 Windows 特有的三部分（查找 Mirasim 进程、读取会话令牌、开机自启）按 Windows 的接口编写，没有在 Windows 上测试过。
 安装后先运行 `--doctor`，它会报告哪一步失败。修改方法见 [node/README.md](node/README.md)。
 
@@ -193,6 +208,8 @@ bundle id 为 `local.eduhuan.ring`，偏好设置按它保存。修改后会丢�
 
 ```bash
 遥测 --render /tmp/p.png [--light] [--detail] [--wait 秒]
+MT_LANG=en 遥测 --render /tmp/p.png          # 英文界面
+MT_SIZE=compact 遥测 --render /tmp/p.png     # 小档（默认标准档，--detail 为大档）
 遥测 --render-capsule /tmp/c.png
 遥测 --render-icons /tmp/i.png [--light]
 ```
@@ -223,8 +240,9 @@ Sources/
   CostLedger.swift      花费账本（insights 逐调用 × 价目表），支持按指定模型重算
   Calibrator.swift      每点单价的备用标定（窗口早于本机计量起点时使用）
   SpeedStats.swift      速度：耗时与 token 按请求号配对，含子代理日志
-  Store.swift           合并两个来源、采样、花费、等价换算、警报
-  Theme.swift           配色、字体、格式化
+  Store.swift           合并两个来源、采样、花费、等价换算、警报、会话与请求统计、提示区块
+  Theme.swift           配色、字体、格式化、语言开关
+  EnglishStrings.swift  界面英文文案表（中文原文作键）
   StatusIcon.swift      菜单栏图标
   PanelView.swift       悬浮面板与速度栏
   WindowCard.swift      窗口卡、累计卡

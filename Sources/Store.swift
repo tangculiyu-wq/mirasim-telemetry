@@ -35,6 +35,20 @@ final class Store: ObservableObject {
     @Published private(set) var monthCost: WindowCost?
     /// 近 14 天逐日花费（日期、金额、请求数），给月卡的柱状走势。
     @Published private(set) var dailySpend: [(day: Date, usd: Double, count: Int)] = []
+    /// 近期活跃会话各自的累计消耗（含标题），最近活跃在前。
+    @Published private(set) var sessions: [SessionUse] = []
+    /// 近 1 小时请求成败统计与活动格。
+    @Published private(set) var reqStats: RequestStats = .empty
+    /// 最近 10 次调用，新的在前。
+    @Published private(set) var recentCalls: [CallRecord] = []
+    /// 是否显示会话卡。
+    @Published var showSessions: Bool {
+        didSet { UserDefaults.standard.set(showSessions, forKey: "showSessions") }
+    }
+    /// 界面语言：auto / zh / en。
+    @Published var language: String {
+        didSet { UserDefaults.standard.set(language, forKey: "language"); Lang.apply(language) }
+    }
     /// 悬浮窗档位：小 / 中 / 大。
     @Published var size: PanelSize {
         didSet { UserDefaults.standard.set(size.rawValue, forKey: "panelSize") }
@@ -169,7 +183,7 @@ final class Store: ObservableObject {
         pinnedWindow = d.string(forKey: "pinnedWindow")
         showPercentInMenuBar = d.object(forKey: "showPercentInMenuBar") as? Bool ?? true
         alwaysOnTop = d.object(forKey: "alwaysOnTop") as? Bool ?? true
-        size = PanelSize(rawValue: d.string(forKey: "panelSize") ?? "") ?? .standard
+        size = PanelSize.renderOverride ?? PanelSize(rawValue: d.string(forKey: "panelSize") ?? "") ?? .standard
         let savedOpacity = d.object(forKey: "opacity") as? Double ?? 1.0
         // 存坏了也不能让窗口彻底看不见
         opacity = savedOpacity.isFinite ? min(1, max(0.3, savedOpacity)) : 1.0
@@ -196,6 +210,10 @@ final class Store: ObservableObject {
         alertThreshold = th.isFinite ? min(0.99, max(0.5, th)) : 0.9
         let tb = d.object(forKey: "trendBack") as? Double ?? 7200
         trendBack = [3600.0, 7200.0, 21600.0].contains(tb) ? tb : 7200
+        showSessions = d.object(forKey: "showSessions") as? Bool ?? true
+        let lang = d.string(forKey: "language") ?? "auto"
+        language = ["auto", "zh", "en"].contains(lang) ? lang : "auto"
+        Lang.apply(language)
         loadSamples()
 
         relay.onEvent = { [weak self] ev in
@@ -284,12 +302,17 @@ final class Store: ObservableObject {
             // 面板看不见——已花、整窗都是下界。零星几条是正常延迟，占比过 5% 且
             // 超过 20 条才提。（旧判据拿 Claude Code 账本对中转流水数「绕开中转」，
             // 账本换源后两边同源，那套比较早已无意义，撤。）
+            // 会话卡 / 请求统计 / 最近调用，都只算当前账号
+            var sess = self.ledger.sessions(activeSince: Date().addingTimeInterval(-6 * 3600), userId: uid, limit: 5)
+            for i in sess.indices { sess[i].title = SessionTitles.title(session: sess[i].id, workspace: sess[i].workspace) }
+            let rs = self.ledger.requestStats(since: Date().addingTimeInterval(-3600), userId: uid)
+            let rc = self.ledger.recentCalls(limit: 10, userId: uid)
             let dayAgo = Date().addingTimeInterval(-86400)
             let gap = self.ledger.backfillGap(since: dayAgo, userId: uid)
             let total = gap.metered + gap.unmetered
             let pct = total > 0 ? Int(Double(gap.unmetered) / Double(total) * 100) : 0
             let coverage: String? = (gap.unmetered >= 20 && Double(gap.unmetered) > Double(total) * 0.05)
-                ? "近 24h 有 \(gap.unmetered) 次调用的用量还没从云端回填（占 \(pct)%），这部分花费面板暂看不见——已花与整窗为下界"
+                ? L("近 24h 有 \(gap.unmetered) 次调用的用量还没从云端回填（占 \(pct)%），这部分花费面板暂看不见——已花与整窗为下界", "\(gap.unmetered) calls in the last 24h (\(pct)%) have no usage backfilled yet; their cost is not shown, so spent and whole-window are lower bounds")
                 : nil
             DispatchQueue.main.async {
                 self.costsInFlight = false
@@ -302,6 +325,9 @@ final class Store: ObservableObject {
                     self.monthCost = WindowCost(spentUSD: mUSD, requests: mN, perPointUSD: nil, fullUSD: nil)
                     self.dailySpend = bars
                     self.coverageWarning = coverage
+                    if self.sessions != sess { self.sessions = sess }
+                    if self.reqStats != rs { self.reqStats = rs }
+                    if self.recentCalls != rc { self.recentCalls = rc }
                 }
                 if self.costsRerun || (!accountKnown && self.snapshot?.account.userId != nil) {
                     self.costsRerun = false
@@ -574,7 +600,7 @@ final class Store: ObservableObject {
         out.precision = .exact
         out.receivedAt = min(base.receivedAt, exact.receivedAt)
         integrityWarning = drift > 0.35
-            ? "两路口径对 \(driftWindow ?? "某窗口") 的读数差 \(String(format: "%.2f", drift)) 个百分点，已按精确源显示"
+            ? L("两路口径对 \(driftWindow ?? L("某窗口")) 的读数差 \(String(format: "%.2f", drift)) 个百分点，已按精确源显示", "The two sources differ by \(String(format: "%.2f", drift)) points for \(driftWindow ?? L("某窗口")); showing the exact source")
             : nil
         return out
     }
@@ -592,6 +618,41 @@ final class Store: ObservableObject {
 
     /// 越线警报。每个「窗口 × 重置周期」只响一次——重置时刻变了 key 就变，
     /// 新周期自动重新武装；容量兜底清空后至多重复响一次，无妨。
+    /// 面板底部提示区块的条目，按严重程度排序（2 红 1 橙 0 灰）。空则区块不显示。
+    /// 把散在三处的提示（额度警戒、回填缺口、校验异常）与新加的失败/限流收拢到一处。
+    struct NoticeItem: Identifiable, Equatable { let id: String; let level: Int; let text: String }
+
+    func noticeItems() -> [NoticeItem] {
+        var out: [NoticeItem] = []
+        if let s = snapshot {
+            for w in s.windows where w.usedPercent >= alertThreshold * 100 {
+                let left = Fmt.duration(w.resetAt.timeIntervalSinceNow)
+                out.append(NoticeItem(id: "limit-" + w.name, level: w.isExhausted ? 2 : 1,
+                    text: w.isExhausted
+                        ? L("\(w.displayName) 已用满，\(left) 后重置", "\(w.displayName) exhausted, resets in \(left)")
+                        : L(String(format: L("%@ 已用 %.0f%%，%@ 后重置"), w.displayName, w.usedPercent, left),
+                            String(format: "%@ at %.0f%%, resets in %@", w.displayName, w.usedPercent, left))))
+            }
+        }
+        // 近 30 分钟＝活动格的后一半
+        let half = reqStats.buckets.suffix(reqStats.buckets.count / 2)
+        let failed30 = half.reduce(0) { $0 + $1.failed }
+        if failed30 >= 2 {
+            let codes = reqStats.codes.sorted { $0.value > $1.value }.map { "\($0.key)×\($0.value)" }.joined(separator: " ")
+            out.append(NoticeItem(id: "failures", level: failed30 >= 5 ? 2 : 1,
+                text: L("近 30 分钟 \(failed30) 次请求失败（近 1 小时错误码 \(codes)）",
+                        "\(failed30) requests failed in the last 30 min (last hour codes \(codes))")))
+        }
+        if !reqStats.rateLimited.isEmpty {
+            let names = reqStats.rateLimited.map { SpeedStats.pretty($0) }.joined(separator: L("、"))
+            out.append(NoticeItem(id: "ratelimit", level: 1,
+                text: L("限流中：\(names) 近 10 分钟有 429", "Rate limited: \(names) returned 429 in the last 10 min")))
+        }
+        if let w = integrityWarning { out.append(NoticeItem(id: "integrity", level: 1, text: w)) }
+        if let w = coverageWarning { out.append(NoticeItem(id: "coverage", level: 0, text: w)) }
+        return out.sorted { $0.level > $1.level }
+    }
+
     private func checkAlerts(_ s: QuotaSnapshot) {
         guard alertEnabled else { return }
         var changed = false

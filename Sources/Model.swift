@@ -9,7 +9,7 @@ enum Precision: String {
     /// 但百分比被四舍五入到 0.1%。
     case coarse
 
-    var label: String { self == .exact ? "精确" : "0.1%" }
+    var label: String { self == .exact ? L("精确") : "0.1%" }
 }
 
 /// 单个额度窗口。
@@ -78,19 +78,19 @@ struct QuotaWindow: Identifiable, Equatable {
     /// 显示名。上游窗口名不适合直接摆在面板上。
     var displayName: String {
         switch name {
-        case "5h": return "5 小时"
-        case "7d": return "7 天"
-        case "7d_fable": return "7 天 · Fable 5.1"
+        case "5h": return L("5 小时")
+        case "7d": return L("7 天")
+        case "7d_fable": return L("7 天 · Fable 5.1")
         default:
             // 未知窗口也要能显示——上游加窗口时自动出现，不用改代码
             let head = name.split(separator: "_").first.map(String.init) ?? name
             let suffix = name.contains("_") ? " · " + name.split(separator: "_").dropFirst().joined(separator: " ") : ""
             guard let unit = head.last, let n = Int(head.dropLast()) else { return name }
             switch unit {
-            case "h": return "\(n) 小时" + suffix
-            case "d": return "\(n) 天" + suffix
-            case "m": return "\(n) 分钟" + suffix
-            case "w": return "\(n) 周" + suffix
+            case "h": return L("\(n) 小时", n == 1 ? "1 hour" : "\(n) hours") + suffix
+            case "d": return L("\(n) 天", n == 1 ? "1 day" : "\(n) days") + suffix
+            case "m": return L("\(n) 分钟", "\(n) min") + suffix
+            case "w": return L("\(n) 周", n == 1 ? "1 week" : "\(n) weeks") + suffix
             default: return name
             }
         }
@@ -158,6 +158,8 @@ enum LinkState: Equatable {
 /// 悬浮窗档位。只给一个固定尺寸的话，盯久了嫌占地方，
 /// 但缩到只剩一个数字又不够用，故给三档。
 enum PanelSize: String, CaseIterable {
+    /// 渲染/自检进程用：定死档位，不读也不写偏好（正式实例与渲染进程共用同一份 UserDefaults）。
+    static var renderOverride: PanelSize?
     /// 只留主角环与钱：最省地方，适合长期挂在角落。
     case compact
     /// 加上其余窗口和速度。默认。
@@ -175,9 +177,9 @@ enum PanelSize: String, CaseIterable {
 
     var label: String {
         switch self {
-        case .compact: return "小"
-        case .standard: return "中"
-        case .full: return "大"
+        case .compact: return L("小")
+        case .standard: return L("中")
+        case .full: return L("大")
         }
     }
 

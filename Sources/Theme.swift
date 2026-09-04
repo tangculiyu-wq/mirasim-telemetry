@@ -126,19 +126,63 @@ enum Fmt {
         return f.string(from: NSNumber(value: v)) ?? String(Int(v))
     }
 
+    /// 「16:20:05」，给最近调用列表。
+    static func clockSec(_ d: Date) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "HH:mm:ss"
+        return f.string(from: d)
+    }
+
+    /// token 数：1.2M / 345k / 980。
+    static func tokens(_ v: Double) -> String {
+        if v >= 1e9 { return String(format: "%.2fB", v / 1e9) }
+        if v >= 1e6 { return String(format: v >= 1e7 ? "%.0fM" : "%.1fM", v / 1e6) }
+        if v >= 1e3 { return String(format: v >= 1e5 ? "%.0fk" : "%.1fk", v / 1e3) }
+        return String(Int(v))
+    }
+
     /// 时长。「4 天 1 小时」这种读法，最多两级，够用且不啰嗦。
     static func duration(_ t: TimeInterval) -> String {
         let s = max(0, Int(t))
         let d = s / 86400, h = (s % 86400) / 3600, m = (s % 3600) / 60
+        if Lang.english {
+            if d > 0 { return h > 0 ? "\(d) d \(h) h" : "\(d) d" }
+            if h > 0 { return m > 0 ? "\(h) h \(m) min" : "\(h) h" }
+            if m > 0 { return "\(m) min" }
+            return "\(s) s"
+        }
         if d > 0 { return h > 0 ? "\(d) 天 \(h) 小时" : "\(d) 天" }
         if h > 0 { return m > 0 ? "\(h) 小时 \(m) 分" : "\(h) 小时" }
         if m > 0 { return "\(m) 分钟" }
         return "\(s) 秒"
     }
 
+    /// 紧凑版「多久前」：53秒前 / 19分前 / 3时前，给一行放不下的地方。
+    static func agoShort(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        if Lang.english {
+            if s < 5 { return "now" }
+            if s < 60 { return "\(s)s" }
+            if s < 3600 { return "\(s / 60)m" }
+            if s < 86400 { return "\(s / 3600)h" }
+            return "\(s / 86400)d"
+        }
+        if s < 5 { return "刚刚" }
+        if s < 60 { return "\(s)秒前" }
+        if s < 3600 { return "\(s / 60)分前" }
+        if s < 86400 { return "\(s / 3600)时前" }
+        return "\(s / 86400)天前"
+    }
+
     /// 「多久前」。数据年龄要让人一眼看出新旧，这是准确性的一部分。
     static func ago(_ t: TimeInterval) -> String {
         let s = max(0, Int(t))
+        if Lang.english {
+            if s < 5 { return "just now" }
+            if s < 60 { return "\(s) s ago" }
+            if s < 3600 { return "\(s / 60) min ago" }
+            if s < 86400 { return "\(s / 3600) h ago" }
+            return "\(s / 86400) d ago"
+        }
         if s < 5 { return "刚刚" }
         if s < 60 { return "\(s) 秒前" }
         if s < 3600 { return "\(s / 60) 分钟前" }
@@ -150,7 +194,7 @@ enum Fmt {
     static func tick(_ t: TimeInterval) -> String {
         let s = max(0, Int(t))
         let d = s / 86400, h = (s % 86400) / 3600, m = (s % 3600) / 60, sec = s % 60
-        if d > 0 { return String(format: "%d天 %02d:%02d:%02d", d, h, m, sec) }
+        if d > 0 { return String(format: Lang.english ? "%dd %02d:%02d:%02d" : "%d天 %02d:%02d:%02d", d, h, m, sec) }
         return String(format: "%02d:%02d:%02d", h, m, sec)
     }
 
@@ -253,4 +297,28 @@ struct VisualEffect: NSViewRepresentable {
         v.material = material
         v.blendingMode = blending
     }
+}
+
+/// 界面语言。auto 跟系统首选语言：中文系统显示中文，其余显示英文。
+enum Lang {
+    private(set) static var english = false
+    static func apply(_ setting: String) {
+        // 渲染与自检可用环境变量强制语言：MT_LANG=en ./遥测 --render …
+        if let env = ProcessInfo.processInfo.environment["MT_LANG"], ["zh", "en"].contains(env) {
+            english = env == "en"; return
+        }
+        switch setting {
+        case "zh": english = false
+        case "en": english = true
+        default: english = !(Locale.preferredLanguages.first ?? "zh").hasPrefix("zh")
+        }
+    }
+}
+
+/// 双语文案：按当前界面语言取中文或英文。语言一变，面板根视图按 language 重建，所有文案随之刷新。
+@inline(__always) func L(_ zh: String, _ en: String) -> String { Lang.english ? en : zh }
+
+/// 查表版：中文原文作键，英文在 EnglishStrings.table 里；查不到照原文显示，不会出空。
+@inline(__always) func L(_ zh: String) -> String {
+    Lang.english ? (EnglishStrings.table[zh] ?? zh) : zh
 }

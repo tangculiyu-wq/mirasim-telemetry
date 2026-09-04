@@ -289,6 +289,8 @@ enum SpeedStats {
     /// 通用解析：`claude-<系列>-<主版本>[-<次版本>][-日期]` → 「系列 主.次」，
     /// 新型号（Fable 5.1、Opus 4.8……）自动认，不必每出一款改一次表——
     /// 曾按前缀硬编码，5.1 被显示成「Fable 5」、4.8 成「Opus 4」。
+    static func pretty(_ id: String) -> String { prettyModel(id) }
+
     private static func prettyModel(_ id: String) -> String {
         var s = id
         let base = id.replacingOccurrences(of: "[1m]", with: "")
@@ -304,5 +306,61 @@ enum SpeedStats {
         // 形如 claude-opus-5[1m] 的上下文后缀保留下来，它影响用量
         if id.contains("[1m]"), !s.contains("1M") { s += " · 1M" }
         return s
+    }
+}
+
+/// 会话标题：Claude Code 会话文件里第一句用户消息的前 30 字。
+/// 文件在 ~/.claude/projects/<工作区路径改写>/<会话id>.jsonl；
+/// 路径改写规则拿不准时退回全目录搜一遍（目录只有几十个，一次 stat 一个）。
+enum SessionTitles {
+    private static var cache: [String: String?] = [:]
+    private static let lock = NSLock()
+
+    static func title(session: String, workspace: String?) -> String? {
+        lock.lock()
+        if let c = cache[session] { lock.unlock(); return c }
+        lock.unlock()
+        let t = load(session: session, workspace: workspace)
+        lock.lock()
+        if cache.count > 300 { cache.removeAll() }
+        cache[session] = t
+        lock.unlock()
+        return t
+    }
+
+    private static func load(session: String, workspace: String?) -> String? {
+        let fm = FileManager.default
+        let base = fm.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
+        var candidates: [URL] = []
+        if let ws = workspace {
+            let dir = ws.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
+            candidates.append(base.appendingPathComponent(dir).appendingPathComponent(session + ".jsonl"))
+        }
+        if let dirs = try? fm.contentsOfDirectory(atPath: base.path) {
+            for d in dirs { candidates.append(base.appendingPathComponent(d).appendingPathComponent(session + ".jsonl")) }
+        }
+        for url in candidates where fm.fileExists(atPath: url.path) {
+            guard let h = FileHandle(forReadingAtPath: url.path) else { continue }
+            let head = h.readData(ofLength: 96 * 1024)
+            try? h.close()
+            for line in String(decoding: head, as: UTF8.self).split(separator: "\n") {
+                guard line.contains("\"type\":\"user\""),
+                      let d = line.data(using: .utf8),
+                      let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+                      o["type"] as? String == "user", (o["isMeta"] as? Bool) != true,
+                      let msg = o["message"] as? [String: Any] else { continue }
+                var text: String?
+                if let s = msg["content"] as? String { text = s }
+                else if let arr = msg["content"] as? [[String: Any]] {
+                    text = arr.first(where: { ($0["type"] as? String) == "text" })?["text"] as? String
+                }
+                // 以 < 开头的是系统注入（命令回显、附件标记），不是用户说的话
+                guard var t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, !t.hasPrefix("<") else { continue }
+                t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                return t.count > 30 ? String(t.prefix(30)) + "…" : t
+            }
+            return nil
+        }
+        return nil
     }
 }

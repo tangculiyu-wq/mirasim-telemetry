@@ -64,7 +64,7 @@ struct CapsuleView: View {
             .buttonStyle(.plain)
             .opacity(hover.on ? 1 : 0)
             .allowsHitTesting(hover.on)
-            .help("收进顶边——鼠标顶到屏幕顶部停一下会再滑出来")
+            .help(L("收进顶边——鼠标顶到屏幕顶部停一下会再滑出来"))
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 6)
@@ -86,7 +86,7 @@ struct CapsuleView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hover.on)
         .onHover { hover.on = $0 }
         .contentShape(Capsule())
-        .help("点一下展开完整面板；按住拖到哪都行（位置会记住，拖回 Mirasim 窗口顶边即恢复自动吸附）；右键出菜单")
+        .help(L("点一下展开完整面板；按住拖到哪都行（位置会记住，拖回 Mirasim 窗口顶边即恢复自动吸附）；右键出菜单"))
     }
 }
 

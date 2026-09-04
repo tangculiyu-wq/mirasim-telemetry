@@ -74,17 +74,10 @@ enum Preview {
 
     /// - Parameter waitForData: 最多等多久让真实额度到位。0 表示不等。
     static func render(to path: String, dark: Bool, expandDetail: Bool, waitForData: TimeInterval) {
-        // 三档大小由偏好 panelSize 决定；--detail 等价临时切到大档。
-        // 渲染进程与正式实例共用同一份偏好，改完必须还原，否则一次渲染
-        // 会把用户的档位永久改掉。
-        let savedSize = UserDefaults.standard.string(forKey: "panelSize")
-        if expandDetail { UserDefaults.standard.set(PanelSize.full.rawValue, forKey: "panelSize") }
-        defer {
-            if expandDetail {
-                if let v = savedSize { UserDefaults.standard.set(v, forKey: "panelSize") }
-                else { UserDefaults.standard.removeObject(forKey: "panelSize") }
-            }
-        }
+        // 档位不跟用户偏好走（正式实例可能正开着小档），也不写偏好：
+        // 默认标准档，--detail 为大档，环境变量 MT_SIZE=compact|standard|full 可指定。
+        PanelSize.renderOverride = expandDetail ? .full
+            : (PanelSize(rawValue: ProcessInfo.processInfo.environment["MT_SIZE"] ?? "") ?? .standard)
         let store = Store()
 
         // 等真实数据。等不到就渲染空态——那本身也是要核对的一屏。
@@ -106,12 +99,17 @@ enum Preview {
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         host.layoutSubtreeIfNeeded()
 
-        // 让 SwiftUI 完成一轮布局与绘制
-        for _ in 0..<3 {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.12))
+        // 等版面稳定再截：账本、会话标题、速度配对都是异步到的，面板会边长边画。
+        // 高度连续 2.4 秒不变才算稳定，最多再等 24 秒（机器忙时账本解析会慢）。
+        var lastHeight = host.fittingSize.height, stableTicks = 0
+        for _ in 0..<60 {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.4))
+            host.frame = NSRect(origin: .zero, size: host.fittingSize)
+            host.layoutSubtreeIfNeeded()
+            let h = host.fittingSize.height
+            if abs(h - lastHeight) < 0.5 { stableTicks += 1 } else { stableTicks = 0; lastHeight = h }
+            if stableTicks >= 6 { break }
         }
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
-        host.layoutSubtreeIfNeeded()
 
         // 面板是半透明的，底下垫一层模拟桌面，否则毛玻璃处渲染成全黑看不出效果
         let pad: CGFloat = 26

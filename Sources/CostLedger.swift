@@ -12,6 +12,63 @@ struct CostEntry: Equatable {
     var user: String? = nil
     /// 四类 token 原数。留给「这段调用若全换成某款模型值多少钱」的重算（等价额度）。
     var input: Double = 0, output: Double = 0, read: Double = 0, write: Double = 0
+    /// 归属的 Claude Code 会话与工作区（Mirasim 流水自带），给按会话汇总用。
+    var session: String? = nil
+    var workspace: String? = nil
+}
+
+/// 近 24 小时每一次调用的轻量记录，含失败与尚未回填用量的。
+/// 失败统计、限流标记、最近调用列表、请求活动条都从它来。
+struct CallRecord: Identifiable, Equatable {
+    let id: String
+    let at: Date
+    let model: String
+    let status: Int
+    let durationMs: Double
+    /// 四类 token 之和；未回填为 0。
+    let tokens: Double
+    let usd: Double
+    let session: String?
+    let workspace: String?
+    let user: String?
+    let agent: String
+    var ok: Bool { status == 200 }
+}
+
+/// 一个 Claude Code 会话的累计消耗。
+struct SessionUse: Identifiable, Equatable {
+    let id: String
+    let workspace: String?
+    /// 会话文件里第一句用户消息，取不到为 nil。
+    var title: String?
+    let usd: Double
+    let calls: Int
+    /// 成功但用量还没回填的调用数，这部分钱还没算进 usd。
+    let pending: Int
+    let input: Double, output: Double, read: Double, write: Double
+    let firstAt: Date
+    let lastAt: Date
+    /// 用过的模型与各自的调用数。
+    let models: [String: Int]
+    var tokens: Double { input + output + read + write }
+}
+
+/// 一段时间内的请求成败统计。
+struct RequestStats: Equatable {
+    var ok = 0
+    var failed = 0
+    /// 失败状态码 → 次数。
+    var codes: [Int: Int] = [:]
+    /// 近 10 分钟出过 429 的模型。
+    var rateLimited: [String] = []
+    /// 按时间格的成败数，最旧在前。
+    var buckets: [(ok: Int, failed: Int)] = []
+    var total: Int { ok + failed }
+    static let empty = RequestStats()
+    static func == (a: RequestStats, b: RequestStats) -> Bool {
+        a.ok == b.ok && a.failed == b.failed && a.codes == b.codes && a.rateLimited == b.rateLimited
+            && a.buckets.count == b.buckets.count && zip(a.buckets, b.buckets).allSatisfy { $0.ok == $1.ok && $0.failed == $1.failed }
+    }
 }
 
 /// Mirasim 花费账本（v9，「按照他的来」——用户拍板对齐 Mirasim 流量监控页）。
@@ -34,7 +91,9 @@ final class CostLedger {
     private var entries: [CostEntry] = []
     /// 成功但用量还没回填（token 全零）的调用。云端计量有延迟；缺口持续
     /// 存在说明凭据缺失或回填断了——那部分钱面板看不见，已花为下界。
-    private var unmetered: [(at: Date, user: String?)] = []
+    private var unmetered: [(at: Date, user: String?, session: String?)] = []
+    /// 近 24 小时全部调用（含失败），见 CallRecord。
+    private var recent: [CallRecord] = []
     private let lock = NSLock()
 
     init() {
@@ -210,7 +269,8 @@ final class CostLedger {
         var size: UInt64
         var mtime: Date
         var entries: [CostEntry]
-        var unmetered: [(at: Date, user: String?)]
+        var unmetered: [(at: Date, user: String?, session: String?)]
+        var recent: [CallRecord]
     }
     private var files: [String: FileCache] = [:]
 
@@ -226,6 +286,7 @@ final class CostLedger {
         // 原先先取后筛，session-usage-* 排在前面会挤掉真正的月度文件。
         let wanted = Array(names.filter { $0.hasPrefix("usage-") && $0.hasSuffix(".ndjson") }.sorted().suffix(3))
         let horizon = Date().addingTimeInterval(-35 * 86400)
+        let recentHorizon = Date().addingTimeInterval(-86400)
         var changed = false
 
         for name in wanted {
@@ -238,7 +299,8 @@ final class CostLedger {
             try? h.close()
 
             var es: [CostEntry] = []
-            var um: [(at: Date, user: String?)] = []
+            var um: [(at: Date, user: String?, session: String?)] = []
+            var rc: [CallRecord] = []
             // 宽松解码：任何一个坏字节都不能让整月账作废
             for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
                 guard let d = line.data(using: .utf8),
@@ -251,19 +313,34 @@ final class CostLedger {
                 let input = n("input"), output = n("output")
                 let read = n("cacheRead"), write = n("cacheWrite")
                 let user = o["userId"] as? String
-                if input + output + read + write <= 0 {
+                let session = o["sessionId"] as? String
+                let workspace = o["workspace"] as? String
+                let model = (o["model"] as? String) ?? ""
+                let status = (o["status"] as? Int) ?? 0
+                let tokens = input + output + read + write
+                var usd = 0.0
+                if tokens > 0 {
+                    let r = rate(provider: (o["provider"] as? String) ?? "anthropic", model: model)
+                    usd = (input * r.input + output * r.output + read * r.read + write * r.write) / 1_000_000
+                }
+                // 近 24 小时的每一条都留一份轻量记录（含失败与未回填）
+                if at >= recentHorizon {
+                    rc.append(CallRecord(id: id, at: at, model: model, status: status,
+                                         durationMs: n("durationMs"), tokens: tokens, usd: usd,
+                                         session: session, workspace: workspace, user: user,
+                                         agent: (o["agent"] as? String) ?? "?"))
+                }
+                if tokens <= 0 {
                     // 成功了却还没回填：记进缺口；失败的调用不计费也不算缺口
-                    if (o["status"] as? Int) == 200 { um.append((at, user)) }
+                    if status == 200 { um.append((at, user, session)) }
                     continue
                 }
-                let model = (o["model"] as? String) ?? ""
-                let r = rate(provider: (o["provider"] as? String) ?? "anthropic", model: model)
-                let usd = (input * r.input + output * r.output + read * r.read + write * r.write) / 1_000_000
                 guard usd > 0 else { continue }
                 es.append(CostEntry(id: id, at: at, usd: usd, model: model, user: user,
-                                    input: input, output: output, read: read, write: write))
+                                    input: input, output: output, read: read, write: write,
+                                    session: session, workspace: workspace))
             }
-            files[name] = FileCache(size: size, mtime: mtime, entries: es, unmetered: um)
+            files[name] = FileCache(size: size, mtime: mtime, entries: es, unmetered: um, recent: rc)
             changed = true
         }
         // 已滚出保留范围的旧月份丢掉
@@ -272,9 +349,11 @@ final class CostLedger {
 
         let all = wanted.flatMap { files[$0]?.entries ?? [] }
         let allUm = wanted.flatMap { files[$0]?.unmetered ?? [] }
+        let allRc = wanted.flatMap { files[$0]?.recent ?? [] }
         lock.lock()
         entries = all
         unmetered = allUm
+        recent = allRc
         lock.unlock()
     }
 
@@ -284,12 +363,75 @@ final class CostLedger {
     func debugRate(provider: String, model: String) -> String {
         _ = loadCatalogIfChanged()
         let r = rate(provider: provider, model: model)
-        return String(format: "in %.2f / out %.2f / 读 %.3f / 写 %.3f", r.input, r.output, r.read, r.write)
+        return String(format: L("in %.2f / out %.2f / 读 %.3f / 写 %.3f"), r.input, r.output, r.read, r.write)
     }
 
     // MARK: 查询
 
     /// 某时段内：已计价的调用数 与 成功但用量未回填的调用数。
+    /// 近期活跃的会话各自的累计消耗（整个会话生命期内、账本保留范围之内），
+    /// 按最近活跃排序。activeSince 之后没有调用的会话不列。
+    func sessions(activeSince: Date, userId: String?, limit: Int) -> [SessionUse] {
+        lock.lock(); defer { lock.unlock() }
+        struct Acc { var ws: String?; var usd = 0.0; var calls = 0; var pending = 0
+                     var i = 0.0, o = 0.0, r = 0.0, w = 0.0; var first = Date.distantFuture; var last = Date.distantPast
+                     var models: [String: Int] = [:] }
+        var acc: [String: Acc] = [:]
+        for e in entries {
+            guard let s = e.session, userId == nil || e.user == userId else { continue }
+            var a = acc[s] ?? Acc()
+            a.ws = a.ws ?? e.workspace
+            a.usd += e.usd; a.calls += 1
+            a.i += e.input; a.o += e.output; a.r += e.read; a.w += e.write
+            if e.at < a.first { a.first = e.at }
+            if e.at > a.last { a.last = e.at }
+            a.models[e.model, default: 0] += 1
+            acc[s] = a
+        }
+        for u in unmetered {
+            guard let s = u.session, userId == nil || u.user == userId else { continue }
+            var a = acc[s] ?? Acc()
+            a.pending += 1; a.calls += 1
+            if u.at > a.last { a.last = u.at }
+            if u.at < a.first { a.first = u.at }
+            acc[s] = a
+        }
+        return acc.filter { $0.value.last >= activeSince }
+            .sorted { $0.value.last > $1.value.last }
+            .prefix(limit)
+            .map { SessionUse(id: $0.key, workspace: $0.value.ws, title: nil, usd: $0.value.usd, calls: $0.value.calls,
+                              pending: $0.value.pending, input: $0.value.i, output: $0.value.o, read: $0.value.r, write: $0.value.w,
+                              firstAt: $0.value.first, lastAt: $0.value.last, models: $0.value.models) }
+    }
+
+    /// 一段时间内的请求成败：总数、失败码分布、近 10 分钟被 429 的模型、按格的活动。
+    func requestStats(since: Date, userId: String?, buckets: Int = 12) -> RequestStats {
+        lock.lock(); defer { lock.unlock() }
+        var st = RequestStats()
+        let now = Date()
+        let span = now.timeIntervalSince(since)
+        st.buckets = Array(repeating: (ok: 0, failed: 0), count: max(1, buckets))
+        var limited: Set<String> = []
+        for c in recent where c.at >= since && (userId == nil || c.user == userId) {
+            let idx = min(buckets - 1, max(0, Int(c.at.timeIntervalSince(since) / span * Double(buckets))))
+            if c.ok { st.ok += 1; st.buckets[idx].ok += 1 }
+            else {
+                st.failed += 1; st.buckets[idx].failed += 1
+                st.codes[c.status, default: 0] += 1
+                if c.status == 429, now.timeIntervalSince(c.at) < 600 { limited.insert(c.model) }
+            }
+        }
+        st.rateLimited = limited.sorted()
+        return st
+    }
+
+    /// 最近 N 次调用，新的在前。
+    func recentCalls(limit: Int, userId: String?) -> [CallRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(recent.filter { userId == nil || $0.user == userId }
+            .sorted { $0.at > $1.at }.prefix(limit))
+    }
+
     func backfillGap(since: Date, userId: String?) -> (metered: Int, unmetered: Int) {
         lock.lock(); defer { lock.unlock() }
         let m = entries.lazy.filter { $0.at >= since && (userId == nil || $0.user == userId) }.count
