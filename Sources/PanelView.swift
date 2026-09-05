@@ -117,12 +117,9 @@ struct PanelView: View {
                 // 当前登录的账号。有好几个号的人切来切去，
                 // 不写明是谁的额度，看仪表就是猜谜。
                 if let who = store.snapshot?.account.name ?? store.snapshot?.account.email {
-                    Text(who)
-                        .font(Theme.label(11.5, .semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    AccountMenu(store: store, who: who)
                         .hoverTip(store.clickThrough ? nil : tip,
-                                  L("当前 Mirasim 登录账号——面板上所有数字都只属于它，切号自动跟随"))
+                                  L("当前 Mirasim 登录账号——面板上所有数字都只属于它。点开可一键切到登录过的其他账号"))
                 }
                 Spacer(minLength: 4)
                 if let exp = store.snapshot?.account.planExpiry {
@@ -132,6 +129,7 @@ struct PanelView: View {
                 }
             }
         }
+        SwitchStatusLine(store: store)
         }
         .padding(.horizontal, 16)
         .padding(.top, 13)
@@ -822,5 +820,127 @@ struct NoticesBlock: View {
 
     private func color(_ level: Int) -> Color {
         level >= 2 ? Color(red: 1, green: 0.38, blue: 0.3) : level == 1 ? Color(red: 1, green: 0.6, blue: 0.2) : .secondary
+    }
+}
+
+/// 账号名＋下拉：列出账号库里登录过的账号，点谁切谁。
+struct AccountMenu: View {
+    @ObservedObject var store: Store
+    let who: String
+
+    var body: some View {
+        let cur = store.snapshot?.account.userId
+        let list = store.accounts.sorted { a, b in
+            if (a.userId == cur) != (b.userId == cur) { return a.userId == cur }
+            return a.lastSeenAt > b.lastSeenAt
+        }
+        Menu {
+            ForEach(list) { a in
+                if a.userId == cur {
+                    Button {} label: { Label(title(a), systemImage: "checkmark") }.disabled(true)
+                } else {
+                    Button { store.switchAccount(to: a.userId) } label: { Text(L("切换到 ", "Switch to ") + title(a) + hint(a)) }
+                }
+            }
+            if list.count < 2 {
+                Text(L("在 Mirasim 里登录另一个账号一次，这里就能一键切回", "Sign in to another account in Mirasim once; then switch back here with one click"))
+            } else {
+                Divider()
+                Menu(L("移出账号库", "Remove from vault")) {
+                    ForEach(list.filter { $0.userId != cur }) { a in
+                        Button(title(a)) { store.removeAccount(a.userId) }
+                    }
+                }
+            }
+            Divider()
+            Text(L("凭据只存本机；切换＝改写 ~/.mirasim/setting.json 的登录块并让 Mirasim 重载，切换前自动备份",
+                   "Credentials stay on this Mac; switching rewrites the auth block in ~/.mirasim/setting.json and reloads Mirasim, with a backup first"))
+        } label: {
+            HStack(spacing: 3) {
+                Text(who)
+                    .font(Theme.label(11.5, .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(store.switchState.busy)
+    }
+
+    private func title(_ a: SavedAccount) -> String {
+        a.displayName + (a.plan.map { " · " + $0.uppercased() } ?? "")
+    }
+
+    /// 那边上次看到还剩多少、多久前在线——切之前心里有数。
+    private func hint(_ a: SavedAccount) -> String {
+        var parts: [String] = []
+        if let w = a.lastWindows.first(where: { $0.name == "7d" }) {
+            let left = Int((100 - w.usedPercent).rounded())
+            parts.append(L("7 天剩 \(left)%", "7d \(left)% left"))
+        }
+        parts.append(Fmt.ago(Date().timeIntervalSince(a.lastSeenAt)))
+        return " · " + parts.joined(separator: " · ")
+    }
+}
+
+/// 切换进度与结果，一行字，放账号行下面；平时不占地方。
+struct SwitchStatusLine: View {
+    @ObservedObject var store: Store
+
+    var body: some View {
+        switch store.switchState {
+        case .idle:
+            EmptyView()
+        case .switching(let t, _, let phase):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(L("正在切到 \(store.accountName(t))… \(phase)", "Switching to \(store.accountName(t))… \(phase)"))
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+        case .done(let t, _):
+            HStack {
+                Text(L("已切到 \(store.accountName(t))，面板数字随之更新", "Switched to \(store.accountName(t)); the panel now follows it"))
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(Color.green)
+                Spacer(minLength: 0)
+            }
+        case .failed(_, let msg, _):
+            HStack(spacing: 6) {
+                Text(msg)
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button(L("知道了", "OK")) { store.switchState = .idle }
+                    .buttonStyle(.plain)
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(.secondary)
+            }
+        case .unconfirmed(let t, _):
+            HStack(spacing: 6) {
+                Text(L("已写入 \(store.accountName(t)) 的登录，Mirasim 还没确认（没有活跃会话时要等它下次刷新）",
+                       "Wrote the sign-in for \(store.accountName(t)); Mirasim has not confirmed yet (with no active session it waits for its next refresh)"))
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(.orange)
+                    .lineLimit(3)
+                Spacer(minLength: 4)
+                Button(L("还原", "Undo")) { store.restoreSwitch() }
+                    .buttonStyle(.plain)
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(.secondary)
+                Button(L("知道了", "OK")) { store.switchState = .idle }
+                    .buttonStyle(.plain)
+                    .font(Theme.label(10.5))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }

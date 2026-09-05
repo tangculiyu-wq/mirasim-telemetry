@@ -19,12 +19,12 @@
 
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, openSync, readSync, closeSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, openSync, readSync, closeSync, existsSync, renameSync, chmodSync, unlinkSync, copyFileSync } from 'node:fs';
 import { homedir, platform, userInfo } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOME = homedir();
 const STATE_DIR = join(HOME, '.mirasim-telemetry');
@@ -58,7 +58,8 @@ if (flag('help') || flag('h')) {
   --router-token <T>    该基址的会话令牌（等价环境变量 MIRASIM_TELEMETRY_TOKEN）
   --user <usr_...>      强制按该账号统计（默认跟随 Mirasim 当前登录账号）
   --alert <N>           提示区块的额度警戒线，百分比（默认 90）
-  --lang zh|en          网页面板默认语言（默认跟浏览器语言；页脚可随时切换）`);
+  --lang zh|en          网页面板默认语言（默认跟浏览器语言；页脚可随时切换）
+  --no-accounts         不记录登录过的账号（关掉一键切换账号）`);
   process.exit(0);
 }
 
@@ -657,13 +658,132 @@ function speedRows(userId) {
   return { rows, paired, probed };
 }
 
+/* ---------------- 账号库与一键切换云端账号 ---------------- */
+
+const SETTING_FILE = join(HOME, '.mirasim', 'setting.json');
+const ACCOUNTS_FILE = join(STATE_DIR, 'accounts.json');
+const BACKUP_DIR = join(STATE_DIR, 'setting-backups');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const writePrivate = (path, text) => { writeFileSync(path, text, { mode: 0o600 }); try { chmodSync(path, 0o600); } catch { /* Windows 无 POSIX 权限位 */ } };
+
+/**
+ * 记住在 Mirasim 里登录过的每个云端账号的 `auth` 块（setting.json 里 Mirasim 写出的加密块，原样保存、不解析、不外发），
+ * 切换＝备份整份 setting.json → 把选中账号的块写回 → 让 Mirasim 重载 → 核对帧里的账号；限时没切过去就整份还原。
+ */
+class AccountVault {
+  constructor() { this.accounts = loadJSON(ACCOUNTS_FILE, []); this.stamp = null; this.lastSaveAt = 0; }
+  save() { mkdirSync(STATE_DIR, { recursive: true }); writePrivate(ACCOUNTS_FILE, JSON.stringify(this.accounts, null, 2)); this.lastSaveAt = Date.now(); }
+  static readSetting() { try { return JSON.parse(readFileSync(SETTING_FILE, 'utf8')); } catch { return null; } }
+  static currentUserIdOnDisk() { return AccountVault.readSetting()?.auth?.userId ?? null; }
+  static canonical(obj) { return JSON.stringify(Object.fromEntries(Object.entries(obj).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))); }
+  /** 3 秒一拍：setting.json 变了就记下当前登录；用结论里的账号/窗口补套餐与用量。返回库有没有变 */
+  captureIfChanged(result) {
+    let st; try { st = statSync(SETTING_FILE); } catch { return false; }
+    const stamp = st.size + ':' + st.mtimeMs;
+    let changed = false;
+    if (stamp !== this.stamp) {
+      this.stamp = stamp;
+      const auth = AccountVault.readSetting()?.auth;
+      if (auth && typeof auth.userId === 'string' && auth.userId && typeof auth.token === 'string' && auth.token) {
+        const json = AccountVault.canonical(auth); const now = Date.now();
+        const a = this.accounts.find((x) => x.userId === auth.userId);
+        if (a) { if (a.authJSON !== json) { a.authJSON = json; a.capturedAt = now; } a.lastSeenAt = now; if (auth.name) a.name = auth.name; }
+        else this.accounts.push({ userId: auth.userId, name: auth.name ?? null, plan: null, planExpiry: null, authJSON: json, capturedAt: now, lastSeenAt: now, lastWindows: [] });
+        changed = true;
+      }
+    }
+    const uid = result?.account?.userId;
+    const a = uid ? this.accounts.find((x) => x.userId === uid) : null;
+    if (a && result.windows?.length) {
+      const before = JSON.stringify(a);
+      if (result.account.plan) a.plan = result.account.plan;
+      if (result.account.planExpiry) a.planExpiry = result.account.planExpiry;
+      if (result.account.name) a.name = result.account.name;
+      a.lastWindows = result.windows.map((w) => ({ name: w.name, usedPercent: w.usedPercent, resetAt: w.resetAt }));
+      a.lastSeenAt = Date.now();
+      if (JSON.stringify(a) !== before && (changed || Date.now() - this.lastSaveAt > 60_000)) changed = true;
+    }
+    if (changed) this.save();
+    return changed;
+  }
+  remove(userId) { this.accounts = this.accounts.filter((a) => a.userId !== userId); this.save(); }
+  /** 只给界面看的字段，绝不带 authJSON */
+  publicList() {
+    return this.accounts.map((a) => { let exp = null; try { const e = JSON.parse(a.authJSON).exp; exp = e ? (e > 1e11 ? e : e * 1000) : null; } catch { /* 无 exp */ }
+      return { userId: a.userId, name: a.name, plan: a.plan, planExpiry: a.planExpiry, capturedAt: a.capturedAt, lastSeenAt: a.lastSeenAt, tokenExpiry: exp, lastWindows: a.lastWindows }; });
+  }
+  backups() { let names; try { names = readdirSync(BACKUP_DIR); } catch { return []; } return names.filter((n) => n.startsWith('setting-') && n.endsWith('.json')).sort().reverse().map((n) => join(BACKUP_DIR, n)); }
+  /** 备份整份 → 原子替换 auth 块；返回备份路径 */
+  writeAuth(userId) {
+    const target = this.accounts.find((a) => a.userId === userId); if (!target) throw new Error('账号库里没有这个账号');
+    const root = AccountVault.readSetting(); if (!root) throw new Error('读不到 ~/.mirasim/setting.json');
+    if (root.auth?.userId === userId) throw new Error('已经是当前账号');
+    mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    const backup = join(BACKUP_DIR, `setting-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${String(root.auth?.userId ?? 'unknown').slice(0, 12)}.json`);
+    copyFileSync(SETTING_FILE, backup); try { chmodSync(backup, 0o600); } catch { /* Windows */ }
+    for (const old of this.backups().slice(12)) { try { unlinkSync(old); } catch { /* 忽略 */ } }
+    root.auth = JSON.parse(target.authJSON);
+    const tmp = SETTING_FILE + '.mt-tmp';
+    writePrivate(tmp, JSON.stringify(root, null, 2));
+    renameSync(tmp, SETTING_FILE);           // 同目录 rename 原子替换，Mirasim 读到的永远是完整的一份
+    try { const st = statSync(SETTING_FILE); this.stamp = st.size + ':' + st.mtimeMs; } catch { /* 下一拍再说 */ }
+    return backup;
+  }
+  restore(backup) { const tmp = SETTING_FILE + '.mt-tmp'; writePrivate(tmp, readFileSync(backup, 'utf8')); renameSync(tmp, SETTING_FILE); }
+}
+
+const switchStatus = { switching: null, last: null };
+async function switchAccount(userId) {
+  if (switchStatus.switching) throw new Error('正在切换中');
+  const cur = state.relay.frame?.account?.userId ?? state.relay.lastUserId ?? null;
+  if (cur === userId) throw new Error('已经是当前账号');
+  switchStatus.switching = { target: userId, since: Date.now(), phase: 'write' }; compute();
+  let backup;
+  try { backup = state.vault.writeAuth(userId); }
+  catch (e) { switchStatus.switching = null; switchStatus.last = { ok: false, target: userId, at: Date.now(), message: e.message }; compute(); return switchStatus.last; }
+  // Mirasim 每次用 token 都重读 setting.json，不必重启（重启会杀掉它拉起的全部 Claude Code 会话）。
+  // 证据两路：会话回环的 /v1/limits 已按新账号返回（强）；帧里的账号变成目标（帧走长连接，可能滞后）。
+  switchStatus.switching.phase = 'verify'; compute();
+  const deadline = Date.now() + 30_000;
+  let ok = false;
+  while (Date.now() < deadline) {
+    state.relay.ask(true);
+    if (await fetchLimits(userId)) { ok = true; break; }
+    if (state.relay.frame?.account?.userId === userId) { ok = true; break; }
+    await sleep(2000);
+  }
+  if (ok) {
+    state.accountOverride = userId;
+    switchStatus.last = { ok: true, target: userId, at: Date.now() };
+    refreshLimits().then(refreshLedger).catch(() => {});
+  } else {
+    const any = await fetchLimits(null);
+    if (any && any.subject !== userId) {   // 有会话在、读得到额度，却还是旧账号：文件没被吃到，不能留半截
+      try { state.vault.restore(backup); } catch { /* 还原失败会在下一拍被采集成新状态 */ }
+      switchStatus.last = { ok: false, target: userId, at: Date.now(), message: 'Mirasim 没有切过去，已还原原来的登录', messageEn: 'Mirasim did not switch; the previous sign-in was restored', backup };
+    } else {
+      switchStatus.last = { ok: false, unconfirmed: true, target: userId, at: Date.now(), backup,
+        message: '已写入新登录，Mirasim 还没确认（没有活跃会话时要等它下次刷新）', messageEn: 'Wrote the new sign-in; Mirasim has not confirmed yet (with no active session it waits for its next refresh)' };
+    }
+  }
+  switchStatus.switching = null; compute();
+  return switchStatus.last;
+}
+/** 把切换前备份的整份 setting.json 还原回去 */
+function restoreSwitch() {
+  const b = switchStatus.last?.backup; if (!b) { switchStatus.last = null; compute(); return; }
+  state.vault.restore(b); state.accountOverride = null; switchStatus.last = null; compute();
+  refreshLimits().then(refreshLedger).catch(() => {});
+}
+
 /* ---------------- 结论：窗口成本、等价、燃烧、累计 ---------------- */
 
 const POINTS_PER_REGULAR_DOLLAR = 100;   // 普通模型每 $1 标价扣 100 点（实测 96–101）
 const POINTS_PER_FABLE5_DOLLAR = 200;    // Fable 每 $1 Fable 5 标价扣 200 点；5.1 也按 5 的价目扣（整窗预测偏差 −0.2%）
 
 const state = {
-  ledger: new Ledger(), relay: new Relay(), limits: null, limitsAt: 0,
+  ledger: new Ledger(), relay: new Relay(), vault: new AccountVault(), limits: null, limitsAt: 0, accountOverride: null,
   samples: loadJSON(join(STATE_DIR, 'samples.json'), []),
   equiv: loadJSON(join(STATE_DIR, 'equiv.json'), {}),
   speeds: { rows: [], paired: 0, probed: 0 }, snapshotAt: 0, result: null, listeners: new Set(),
@@ -672,8 +792,14 @@ const state = {
 /** 当前快照：精确源优先，否则帧；帧超过 90 秒没更新算过期 */
 function snapshot() {
   const frame = state.relay.frame;
-  const uid = opt('user', null) || frame?.account?.userId || state.limits?.subject || null;
-  const account = { ...(frame?.account || {}), userId: uid };
+  // 刚切过账号时帧（长连接）身份可能滞后：以切换核对过的账号为准，帧跟上来就撤销覆盖
+  if (state.accountOverride && frame?.account?.userId === state.accountOverride) state.accountOverride = null;
+  const uid = opt('user', null) || state.accountOverride || frame?.account?.userId || state.limits?.subject || null;
+  let account = { ...(frame?.account || {}), userId: uid };
+  if (state.accountOverride && frame?.account?.userId !== uid) {
+    const saved = state.vault.accounts.find((a) => a.userId === uid);
+    account = { userId: uid, name: saved?.name ?? null, plan: saved?.plan ?? null, planExpiry: saved?.planExpiry ?? null, paid: state.limits?.paid ?? null, host: frame?.account?.host ?? null, relayStatus: frame?.account?.relayStatus ?? null };
+  }
   if (state.limits && Date.now() - state.limitsAt < STALE_AFTER_S * 1000) {
     return { windows: state.limits.windows, account, capturedAt: state.limitsAt, precision: 'exact', flags: state.limits };
   }
@@ -866,6 +992,7 @@ function compute() {
     capturedAt: snap?.capturedAt ?? null, account: snap?.account ?? null, accountNotice: accountNotice?.zh ?? null,
     windows, totals, speeds: state.speeds.rows, pairing: { paired: state.speeds.paired, probed: state.speeds.probed }, channelPort: state.relay.port,
     sessions, stats, recent, notices, lang: opt('lang', null),
+    accounts: flag('no-accounts') ? [] : state.vault.publicList(), switching: switchStatus.switching, lastSwitch: switchStatus.last,
   };
   for (const fn of state.listeners) fn();
   return state.result;
@@ -874,7 +1001,7 @@ function compute() {
 /* ---------------- 采集节拍 ---------------- */
 
 async function refreshLimits() {
-  const p = await fetchLimits(state.relay.lastUserId);
+  const p = await fetchLimits(state.accountOverride || state.relay.lastUserId);
   if (p) { state.limits = p; state.limitsAt = Date.now(); }
   else if (Date.now() - state.limitsAt > STALE_AFTER_S * 1000) state.limits = null;
   const snap = snapshot();
@@ -894,6 +1021,7 @@ function refreshLedger() {
 }
 /** 流水文件一变就刷（1.2–5 秒内），不必等整分钟 */
 function pollInsights() {
+  if (!flag('no-accounts') && !switchStatus.switching && state.vault.captureIfChanged(state.result)) compute();
   const names = state.ledger.usageFiles(); if (!names.length) return;
   let st; try { st = statSync(join(INSIGHTS_DIR, names[names.length - 1])); } catch { return; }
   const stamp = st.size + ':' + st.mtimeMs;
@@ -918,6 +1046,20 @@ function startServer() {
     if (path === '/quota.json') { res.writeHead(200, { ...head, 'Content-Type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify(state.result || { state: 'connecting', stateLabel: '连接中', windows: [] })); }
     if (path === '/api/health') { res.writeHead(200, { ...head, 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ name: 'mirasim-telemetry', version: VERSION })); }
     if (path === '/refresh' && req.method === 'POST') { state.relay.ask(true); refreshLimits().then(refreshLedger); res.writeHead(204, head); return res.end(); }
+    if (path === '/accounts') { res.writeHead(200, { ...head, 'Content-Type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ accounts: state.vault.publicList(), current: state.relay.frame?.account?.userId ?? null, switching: switchStatus.switching, lastSwitch: switchStatus.last })); }
+    if (path === '/switch/restore' && req.method === 'POST') { try { restoreSwitch(); res.writeHead(204, head); } catch (e) { res.writeHead(500, head); res.write(e.message); } return res.end(); }
+    if (path === '/switch/ack' && req.method === 'POST') { switchStatus.last = null; compute(); res.writeHead(204, head); return res.end(); }
+    if ((path === '/switch' || path === '/accounts/remove') && req.method === 'POST') {
+      let body = ''; req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        let uid = null; try { uid = JSON.parse(body || '{}').userId; } catch { /* 空体 */ }
+        if (!uid) { res.writeHead(400, head); return res.end('userId?'); }
+        if (path === '/accounts/remove') { state.vault.remove(uid); compute(); res.writeHead(204, head); return res.end(); }
+        switchAccount(uid).catch((e) => log(`切换账号失败：${e.message}`));
+        res.writeHead(202, head); res.end();     // 进度看 /quota.json 的 switching / lastSwitch（SSE 会推）
+      });
+      return;
+    }
     if (path === '/events') {
       res.writeHead(200, { ...head, 'Content-Type': 'text/event-stream', Connection: 'keep-alive' });
       res.write(': hi\n\n');

@@ -296,6 +296,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reset.target = self
         menu.addItem(reset)
 
+        // 账号库里有两个以上账号才出现：一键切到登录过的另一个账号
+        if store.accounts.count > 1 {
+            let acct = NSMenu()
+            acct.autoenablesItems = false
+            let cur = store.snapshot?.account.userId
+            for a in store.accounts.sorted(by: { $0.lastSeenAt > $1.lastSeenAt }) {
+                let mi = NSMenuItem(title: a.displayName + (a.plan.map { " · " + $0.uppercased() } ?? ""),
+                                    action: #selector(switchAccountMenu(_:)), keyEquivalent: "")
+                mi.target = self
+                mi.representedObject = a.userId
+                mi.state = a.userId == cur ? .on : .off
+                mi.isEnabled = a.userId != cur && !store.switchState.busy
+                acct.addItem(mi)
+            }
+            let acctItem = NSMenuItem(title: L("切换账号"), action: nil, keyEquivalent: "")
+            acctItem.submenu = acct
+            menu.addItem(acctItem)
+        }
+
         menu.addItem(.separator())
 
         let pct = NSMenuItem(title: L("菜单栏显示百分比"), action: #selector(togglePercent), keyEquivalent: "")
@@ -412,6 +431,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func togglePercent() {
         store.showPercentInMenuBar.toggle()
         updateIcon()
+    }
+
+    @objc private func switchAccountMenu(_ sender: NSMenuItem) {
+        guard let uid = sender.representedObject as? String else { return }
+        store.switchAccount(to: uid)
     }
 
     @objc private func pinWindow(_ sender: NSMenuItem) {

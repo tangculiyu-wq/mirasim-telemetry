@@ -145,8 +145,11 @@ The two quota sources carry the same data (the frame's `usage.source` is `relay-
 are cross-checked; a difference above 0.35 points is flagged in the details. Budget points are Mirasim relay plan
 figures, not Anthropic's direct-plan quota.
 
-The program reads no credentials, makes no outbound network requests and writes nothing into Mirasim. It writes only
-its samples (kept 24 hours) and calibration file under `~/Library/Application Support/EduHuan/`, and its preferences in UserDefaults.
+The program makes no outbound network requests and reads only local loopback ports and local files. It writes only its samples
+(kept 24 hours), calibration file, account vault and `setting.json` backups under `~/Library/Application Support/EduHuan/`, and
+its preferences in UserDefaults. The one write into Mirasim's directory is the sign-in block replacement in `~/.mirasim/setting.json`
+when you click "Switch account" (see the section above), always preceded by a backup. The vault holds the encrypted sign-in blocks
+Mirasim wrote; this program does not parse them. Turn off "Remember signed-in accounts" to stop recording them.
 
 ## Using the panel
 
@@ -161,6 +164,37 @@ its samples (kept 24 hours) and calibration file under `~/Library/Application Su
   language (system / 中文 / English), sessions card, menu bar percent and window, quota alert and threshold (50%–99%),
   trend span, launch at login, reset position, rescan ledger.
 - The menu bar icon follows the window with the least left (configurable). Left-click shows or hides the panel.
+- **One-click account switching**: click the account name at the top of the panel to list the Mirasim cloud accounts you have
+  signed in to, and pick one. The right-click menu has the same "Switch account" list. Each entry shows the 7-day quota left
+  when it was last seen and how long ago. Details in the next section.
+
+## One-click account switching
+
+Mirasim's cloud account (the name at the top of the panel; the quota windows belong to it) can only be signed out and signed in
+again with a verification code; there is no account pool. This program adds one:
+
+1. Every account you sign in to in Mirasim has its sign-in block (`auth` in `~/.mirasim/setting.json`) recorded in a local vault,
+   `~/Library/Application Support/EduHuan/accounts.json` (mode 0600, readable only by you). The block is ciphertext that Mirasim
+   wrote with a machine-bound key; this program does not parse, decrypt or send it. It is stored as is.
+2. Switching backs up the whole `setting.json` to `EduHuan/setting-backups/` (12 kept), then atomically replaces the sign-in block
+   with the chosen account's. Mirasim re-reads this file every time it uses the token, so no restart is needed, running Claude Code
+   sessions are untouched, and subsequent calls are billed to the new account.
+3. Verification: the session loopback `/v1/limits` answers for the new account, or the relay frame's account becomes the target.
+   If a session is running but `/v1/limits` still reports the old account, the switch did not take and the backup is restored
+   automatically. With no active session `/v1/limits` is unavailable and the frame (a long-lived connection) may lag; the panel
+   then says "Mirasim has not confirmed yet" and offers an Undo button.
+
+Limits and caveats:
+
+- The sign-in block is bound to this machine (AES-GCM, key in the system keychain). The vault cannot be copied to another computer.
+- After switching, Mirasim's mirachannel connection and device registration stay with the old account until it reconnects on its
+  own; meanwhile Mirasim's own UI may still show the old account name and the paired-device list may sit under the wrong account.
+  This panel follows the `/v1/limits` account and is unaffected.
+- An account unused for a long time may have an expired refresh token. Mirasim will then ask you to sign in again; click Undo to
+  return to the previous account.
+- Do not restart Mirasim's host as part of this: `restartHost` kills every Claude Code session process it spawned, and their
+  loopback routes die with them.
+- Settings let you turn off "Remember signed-in accounts" or clear the vault.
 
 When Mirasim's log changes, speed, spend and points refresh within 1.2–5 seconds. Points are read every 20 seconds; frames update immediately.
 
@@ -245,6 +279,7 @@ Sources/
   RelayClient.swift     mirachannel WebSocket client
   CostLedger.swift      spend ledger (per-call insights × price list), repricing, sessions, request stats
   Calibrator.swift      fallback per-point calibration (windows older than local metering)
+  AccountVault.swift    account vault: remembers signed-in accounts; backs up and replaces the sign-in block in setting.json
   SpeedStats.swift      speed: durations paired with tokens by request id, subagent logs, session titles
   Store.swift           merge sources, samples, spend, equivalents, alerts, notices
   Theme.swift           colors, fonts, formatting, language switch

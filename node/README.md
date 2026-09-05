@@ -69,13 +69,18 @@ node mirasim-telemetry.mjs --router-base http://127.0.0.1:端口/密钥 --router
 浏览器窗口不能置顶。需要置顶时可以用 [PowerToys](https://learn.microsoft.com/windows/powertoys/) 的
 「Always On Top」功能（默认快捷键 Win+Ctrl+T）。
 
-其它接口：`/quota.json`（全部数据，含 `sessions` / `stats` / `recent` / `notices` 四个新字段，提示文案中英各一份）、`/events`（SSE）、`POST /refresh`（让 Mirasim 忽略缓存重新查询一次）。
+其它接口：`/quota.json`（全部数据，含 `sessions` / `stats` / `recent` / `notices` / `accounts` / `switching` / `lastSwitch`，提示文案中英各一份）、`/events`（SSE）、`POST /refresh`（让 Mirasim 忽略缓存重新查询一次）、
+`/accounts`（账号库，不含凭据）、`POST /switch {userId}`（一键切换云端账号，进度在 `/quota.json`）、`POST /switch/restore`（还原切换前的备份）、`POST /accounts/remove {userId}`。
+
+一键切换账号的做法与 macOS 版相同：登录过的账号的 `auth` 块记进 `%USERPROFILE%\.mirasim-telemetry\accounts.json`，
+切换时备份整份 `setting.json` 到 `.mirasim-telemetry\setting-backups\` 再原子替换，按 `/v1/limits` 核对，不重启 Mirasim。
+`--no-accounts` 关掉记录。Windows 上没有 POSIX 权限位，账号库文件靠用户目录的 ACL 保护。
 
 ## 数据与写入的文件
 
 读取：`%USERPROFILE%\.mirasim\insights\usage-*.ndjson`（调用日志）、`%USERPROFILE%\.mirasim\models-dev-cache.json`（价目）、
 `%USERPROFILE%\.claude\projects\**\*.jsonl`（速度配对）。写入：只有 `%USERPROFILE%\.mirasim-telemetry\`
-下的百分比采样（保留 24 小时）与等价单价缓存。
+下的百分比采样（保留 24 小时）、等价单价缓存、账号库与 setting.json 备份；主动点「切换账号」时会替换 `%USERPROFILE%\.mirasim\setting.json` 的登录块（先备份）。
 
 ## 可能需要修改的地方
 

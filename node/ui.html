@@ -69,6 +69,21 @@
   details.recent summary::-webkit-details-marker { display: none; }
   details.recent .row { height: 14px; color: var(--ink-3); }
   details.recent .c1 { width: 56px; } details.recent .c2 { width: 64px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; } details.recent .c3 { width: 26px; } details.recent .c4 { width: 46px; text-align: right; } details.recent .c5 { width: 52px; text-align: right; } details.recent .c6 { width: 56px; text-align: right; color: var(--ink-2); }
+  .acct-menu { position: relative; display: inline-block; }
+  .acct-menu summary { list-style: none; cursor: pointer; white-space: nowrap; }
+  .acct-menu summary::-webkit-details-marker { display: none; }
+  .acct-menu .chev { font-size: 10px; color: var(--ink-4); }
+  .acct-list { position: absolute; left: 0; top: 20px; z-index: 5; min-width: 270px; background: var(--bg); border: 1px solid var(--track); border-radius: 10px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 11px; }
+  .acct-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; white-space: nowrap; }
+  .acct-item.cur { color: var(--ink-2); }
+  .acct-item button { background: none; border: 0; cursor: pointer; font: inherit; padding: 2px 0; }
+  .acct-item .acct-switch { flex: 1; text-align: left; color: var(--ink); }
+  .acct-item .acct-switch:hover { color: var(--accent-blue); }
+  .acct-item .acct-remove { color: var(--ink-4); }
+  .acct-item .acct-remove:hover { color: var(--bad); }
+  .acct-hint { font-size: 9.5px; color: var(--ink-3); padding: 4px 6px 2px; white-space: normal; line-height: 1.3; }
+  .swline { font-size: 10.5px; padding: 0 4px 8px; display: flex; gap: 6px; align-items: baseline; }
+  button.lnk { background: none; border: 0; color: var(--ink-3); text-decoration: underline dotted; cursor: pointer; font: inherit; }
   footer { display: flex; align-items: center; gap: 6px; padding: 6px 6px 0; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
   footer .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
   footer .dot.stale { background: #e0b73a; } footer .dot.off { background: #999; }
@@ -117,7 +132,7 @@
   };
   const basename = (p) => p ? p.split(/[\\/]/).filter(Boolean).pop() : '';
 
-  let data = null, recentOpen = store.get('mt.recent') === '1';
+  let data = null, recentOpen = store.get('mt.recent') === '1', acctOpen = q.has('acct');
   const spark = (trend) => {
     if (!trend || trend.length < 3) return '<svg></svg>';
     const xs = trend.map((p) => p[0]), ys = trend.map((p) => p[1]);
@@ -225,6 +240,32 @@
     return `<details class="recent" id="recent" ${recentOpen ? 'open' : ''}><summary>${T('最近调用', 'Recent calls')} · ${T(`1h ${st.ok + st.failed} 次`, `1h ${st.ok + st.failed} calls`)}${st.failed ? ` · <span class="bad">${T(`${st.failed} 失败`, `${st.failed} failed`)}</span>` : ''}</summary>${rows}</details>`;
   }
 
+  // 账号名下拉：账号库里登录过的账号，点谁切谁；切换进度另起一行
+  function accountMenu(d, a) {
+    const name = esc(a.name || a.userId || '');
+    const list = (d.accounts || []).slice().sort((x, y) => (x.userId === a.userId ? -1 : y.userId === a.userId ? 1 : y.lastSeenAt - x.lastSeenAt));
+    if (!list.length) return `<span>${name}</span>`;
+    const label = (x) => esc(x.name || x.userId.slice(0, 12)) + (x.plan ? ` · ${esc(String(x.plan).toUpperCase())}` : '');
+    const hint = (x) => { const w7 = (x.lastWindows || []).find((w) => w.name === '7d'); const parts = []; if (w7) parts.push(T(`7 天剩 ${Math.round(100 - w7.usedPercent)}%`, `7d ${Math.round(100 - w7.usedPercent)}% left`)); parts.push(ago(Date.now() - x.lastSeenAt)); return ' · ' + parts.join(' · '); };
+    const busy = !!d.switching;
+    const items = list.map((x) => x.userId === a.userId
+      ? `<div class="acct-item cur">✓ ${label(x)}</div>`
+      : `<div class="acct-item"><button class="acct-switch" data-uid="${esc(x.userId)}" ${busy ? 'disabled' : ''}>${T('切换到 ', 'Switch to ')}${label(x)}<span class="t3">${hint(x)}</span></button><button class="acct-remove" data-uid="${esc(x.userId)}" title="${T('移出账号库', 'Remove from vault')}">×</button></div>`).join('');
+    const tips = (list.length < 2 ? `<div class="acct-hint">${T('在 Mirasim 里登录另一个账号一次，这里就能一键切回', 'Sign in to another account in Mirasim once; then switch back here with one click')}</div>` : '')
+      + `<div class="acct-hint">${T('凭据只存本机；切换＝改写 ~/.mirasim/setting.json 的登录块并让 Mirasim 重载，切换前自动备份', 'Credentials stay on this machine; switching rewrites the auth block in ~/.mirasim/setting.json and reloads Mirasim, with a backup first')}</div>`;
+    return `<details class="acct-menu" id="acctMenu" ${acctOpen ? 'open' : ''}><summary>${name} <span class="chev">⌄</span></summary><div class="acct-list">${items}${tips}</div></details>`;
+  }
+  function switchLine(d) {
+    const nameOf = (uid) => { const x = (d.accounts || []).find((y) => y.userId === uid); return esc(x?.name || String(uid).slice(0, 12)); };
+    const sw = d.switching, ls = d.lastSwitch;
+    if (sw) return `<div class="swline t2">⏳ ${T(`正在切到 ${nameOf(sw.target)}… ${sw.phase === 'write' ? '写入凭据' : '等 Mirasim 读取新登录'}`, `Switching to ${nameOf(sw.target)}… ${sw.phase === 'write' ? 'writing credentials' : 'waiting for Mirasim to pick it up'}`)}</div>`;
+    if (!ls) return '';
+    if (ls.ok) return Date.now() - ls.at < 8000 ? `<div class="swline good">${T(`已切到 ${nameOf(ls.target)}，面板数字随之更新`, `Switched to ${nameOf(ls.target)}; the panel now follows it`)}</div>` : '';
+    const msg = esc(T(ls.message, ls.messageEn || ls.message));
+    if (ls.unconfirmed) return `<div class="swline warn"><span>${msg}</span><button class="lnk" id="swrestore">${T('还原', 'Undo')}</button><button class="lnk" id="swack">${T('知道了', 'OK')}</button></div>`;
+    return `<div class="swline bad"><span>${msg}</span><button class="lnk" id="swack">${T('知道了', 'OK')}</button></div>`;
+  }
+
   function render() {
     const d = data; const now = Date.now();
     if (!lang) lang = d?.lang || ((navigator.language || 'zh').startsWith('zh') ? 'zh' : 'en');
@@ -243,7 +284,8 @@
     const notes = (d.notices || []).map((n) => `<div class="note l${n.level}">${esc(T(n.zh, n.en || n.zh))}</div>`).join('');
     $('#app').innerHTML = `
       <header>${h1}<span class="pill">${esc(stateLabel)}</span></header>
-      <div class="acct">${a.plan ? `<span class="plan">${esc(String(a.plan).toUpperCase())}</span>` : ''}<span>${esc(a.name || a.userId || '')}</span><span class="exp mono">${exp}</span></div>
+      <div class="acct">${a.plan ? `<span class="plan">${esc(String(a.plan).toUpperCase())}</span>` : ''}${accountMenu(d, a)}<span class="exp mono">${exp}</span></div>
+      ${switchLine(d)}
       ${d.windows.map((w) => windowCard(w, now)).join('')}
       ${ledgerCard(d.totals)}
       ${speedCard(d.speeds, d.totals, st, now)}
@@ -254,6 +296,12 @@
     $('#refresh')?.addEventListener('click', () => fetch('/refresh', { method: 'POST' }).then(() => setTimeout(load, 800)));
     $('#lang')?.addEventListener('click', () => { lang = lang === 'en' ? 'zh' : 'en'; store.set('mt.lang', lang); render(); });
     $('#recent')?.addEventListener('toggle', (e) => { recentOpen = e.target.open; store.set('mt.recent', recentOpen ? '1' : '0'); });
+    $('#acctMenu')?.addEventListener('toggle', (e) => { acctOpen = e.target.open; });
+    const post = (url, userId) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
+    document.querySelectorAll('.acct-switch').forEach((b) => b.addEventListener('click', () => { acctOpen = false; post('/switch', b.dataset.uid).then(() => setTimeout(load, 400)); }));
+    document.querySelectorAll('.acct-remove').forEach((b) => b.addEventListener('click', () => { post('/accounts/remove', b.dataset.uid).then(() => setTimeout(load, 300)); }));
+    $('#swack')?.addEventListener('click', () => fetch('/switch/ack', { method: 'POST' }).then(() => setTimeout(load, 200)));
+    $('#swrestore')?.addEventListener('click', () => fetch('/switch/restore', { method: 'POST' }).then(() => setTimeout(load, 500)));
   }
 
   async function load() {

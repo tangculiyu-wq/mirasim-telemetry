@@ -111,6 +111,11 @@ enum EnglishStrings {
         "重置窗口位置": "Reset position",
         "重扫账本": "Rescan ledger",
         "退出": "Quit",
+        "切换账号": "Switch account",
+        "记住登录过的账号": "Remember signed-in accounts",
+        "清空账号库": "Clear account vault",
+        "在 Mirasim 里登录过的账号自动记进本机账号库（~/Library/Application Support/EduHuan/accounts.json，仅本人可读），之后点面板顶上的账号名即可一键切换。凭据是 Mirasim 写出的加密块，本程序不解析、不外发。": "Accounts you sign in to in Mirasim are remembered in a local vault (~/Library/Application Support/EduHuan/accounts.json, readable only by you); click the account name at the top of the panel to switch with one click. The credentials are the encrypted block Mirasim writes; this program neither parses nor sends them anywhere.",
+        "当前 Mirasim 登录账号——面板上所有数字都只属于它。点开可一键切到登录过的其他账号": "The Mirasim account signed in. Every number on the panel belongs to it. Open to switch to another account you have signed in to.",
         "怎么用": "How to use",
 
         // 明细

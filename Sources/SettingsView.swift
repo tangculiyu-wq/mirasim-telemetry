@@ -68,9 +68,14 @@ struct SettingsView: View {
             group(L("系统")) {
                 toggleRow(L("开机自启"), isOn: loginBinding,
                           tip: L("经系统「登录项」注册；首次开启可能需要在 系统设置 › 通用 › 登录项 里批准"))
+                toggleRow(L("记住登录过的账号"), isOn: $store.rememberAccounts,
+                          tip: L("在 Mirasim 里登录过的账号自动记进本机账号库（~/Library/Application Support/EduHuan/accounts.json，仅本人可读），之后点面板顶上的账号名即可一键切换。凭据是 Mirasim 写出的加密块，本程序不解析、不外发。"))
                 HStack(spacing: 8) {
                     SettingsButton(title: L("重置窗口位置"), action: onResetPosition)
                     SettingsButton(title: L("重扫账本"), action: { store.refresh() })
+                    if !store.accounts.isEmpty {
+                        SettingsButton(title: L("清空账号库"), action: { store.clearAccounts() })
+                    }
                     Spacer(minLength: 4)
                     SettingsButton(title: L("退出"), destructive: true, action: onQuit)
                 }

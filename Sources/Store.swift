@@ -155,6 +155,18 @@ final class Store: ObservableObject {
     // MARK: 内部
 
     private let relay = RelayClient()
+
+    /// 账号库：记住在 Mirasim 里登录过的云端账号，供一键切换。
+    let vault = AccountVault()
+    @Published var accounts: [SavedAccount] = []
+    @Published var switchState: SwitchState = .idle
+    /// 关掉就不再记录凭据（已记的仍在，可在设置里清空）。
+    @Published var rememberAccounts: Bool {
+        didSet { UserDefaults.standard.set(rememberAccounts, forKey: "rememberAccounts") }
+    }
+    /// 切换成功后 Mirasim 已在用的账号。帧那一路走的是长连接，身份可能滞后一阵，
+    /// 这期间精确源按它校验、面板按它显示；帧跟上来就清掉。
+    private var accountOverride: String?
     private let limits = LimitsClient()
     private let ledger = CostLedger()
     private let calibrator = Calibrator()
@@ -211,6 +223,8 @@ final class Store: ObservableObject {
         let tb = d.object(forKey: "trendBack") as? Double ?? 7200
         trendBack = [3600.0, 7200.0, 21600.0].contains(tb) ? tb : 7200
         showSessions = d.object(forKey: "showSessions") as? Bool ?? true
+        rememberAccounts = d.object(forKey: "rememberAccounts") as? Bool ?? true
+        accounts = vault.accounts
         let lang = d.string(forKey: "language") ?? "auto"
         language = ["auto", "zh", "en"].contains(lang) ? lang : "auto"
         Lang.apply(language)
@@ -250,6 +264,7 @@ final class Store: ObservableObject {
     deinit { relay.stop(); limitsTimer?.invalidate(); speedTimer?.invalidate(); watchTimer?.invalidate() }
 
     private func pollInsightsChange() {
+        pollSettingChange()
         let fm = FileManager.default
         let dir = fm.homeDirectoryForCurrentUser.appendingPathComponent(".mirasim/insights", isDirectory: true)
         guard let names = try? fm.contentsOfDirectory(atPath: dir.path),
@@ -497,6 +512,96 @@ final class Store: ObservableObject {
         return pts.enumerated().compactMap { i, s in i % step == 0 ? (s.at, s.percent) : nil }
     }
 
+    // MARK: 账号库与切换
+
+    /// 3 秒一拍：setting.json 变了就把当前登录记进账号库。
+    private func pollSettingChange() {
+        // 渲染/自检等命令行模式不落盘，也不去碰账号库
+        guard rememberAccounts, !switchState.busy, !CostLedger.readOnly else { return }
+        let snap = snapshot
+        work.async { [weak self] in
+            guard let self, self.vault.captureIfChanged(snapshot: snap) else { return }
+            let list = self.vault.accounts
+            DispatchQueue.main.async { self.accounts = list }
+        }
+    }
+
+    func removeAccount(_ userId: String) { vault.remove(userId: userId); accounts = vault.accounts }
+    func clearAccounts() { vault.removeAll(); accounts = [] }
+
+    func accountName(_ userId: String) -> String {
+        accounts.first { $0.userId == userId }?.displayName ?? String(userId.prefix(12))
+    }
+
+    /// 一键切换云端账号：备份 → 写入目标账号的 auth 块 → 让 Mirasim 重载 → 等帧里的账号变成目标。
+    /// 限时内没切过去就整份还原：文件与 Mirasim 内存里的登录保持一致，不留半截状态。
+    func switchAccount(to userId: String) {
+        guard !switchState.busy, userId != snapshot?.account.userId else { return }
+        switchState = .switching(target: userId, since: Date(), phase: L("写入凭据", "writing credentials"))
+        work.async { [weak self] in
+            guard let self else { return }
+            let backup: URL
+            do { backup = try self.vault.writeAuth(of: userId) }
+            catch {
+                DispatchQueue.main.async { self.switchState = .failed(target: userId, message: error.localizedDescription, backup: nil) }
+                return
+            }
+            // Mirasim 每次用 token 都重读 setting.json，不必重启（重启会杀掉它拉起的全部 Claude Code 会话）。
+            // 证据两路：会话回环的 /v1/limits 已按新账号返回（强）；帧里的账号变成目标（帧走长连接，可能滞后）。
+            self.setSwitchPhase(L("等 Mirasim 读取新登录", "waiting for Mirasim to pick it up"))
+            let deadline = Date().addingTimeInterval(30)
+            var confirmed = false
+            var stillOld = false
+            while Date() < deadline {
+                self.relay.poll(fresh: true)
+                if self.limits.fetch(expectedUserId: userId) != nil { confirmed = true; break }
+                let frameUser = DispatchQueue.main.sync { self.snapshot?.account.userId }
+                if frameUser == userId { confirmed = true; break }
+                Thread.sleep(forTimeInterval: 2)
+            }
+            if !confirmed, let any = self.limits.fetch(expectedUserId: nil), any.subject != userId {
+                stillOld = true   // 有会话在、也读得到额度，却还是旧账号：文件没被吃到，不能留半截
+            }
+            DispatchQueue.main.async {
+                if confirmed {
+                    self.accountOverride = userId
+                    self.switchState = .done(target: userId, at: Date())
+                    self.refresh()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                        if case .done = self?.switchState ?? .idle { self?.switchState = .idle }
+                    }
+                } else if stillOld {
+                    try? self.vault.restore(backup: backup)
+                    self.switchState = .failed(target: userId,
+                                               message: L("Mirasim 没有切过去，已还原原来的登录", "Mirasim did not switch; the previous sign-in was restored"),
+                                               backup: backup)
+                } else {
+                    self.switchState = .unconfirmed(target: userId, backup: backup)
+                }
+            }
+        }
+    }
+
+    /// 把切换前备份的整份 setting.json 还原回去。
+    func restoreSwitch() {
+        var backup: URL?
+        switch switchState {
+        case .unconfirmed(_, let b): backup = b
+        case .failed(_, _, let b): backup = b
+        default: break
+        }
+        guard let b = backup else { switchState = .idle; return }
+        do { try vault.restore(backup: b); switchState = .idle; accountOverride = nil; refresh() }
+        catch { switchState = .failed(target: "", message: L("还原失败：", "Restore failed: ") + error.localizedDescription, backup: b) }
+    }
+
+    private func setSwitchPhase(_ phase: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, case .switching(let t, let s, _) = self.switchState else { return }
+            self.switchState = .switching(target: t, since: s, phase: phase)
+        }
+    }
+
     /// 手动刷新。用户点刷新时两条路一起催。
     func refresh() {
         relay.poll(fresh: true)
@@ -523,6 +628,7 @@ final class Store: ObservableObject {
 
     /// 帧口径快照到达。若手上有新鲜的精确值，用精确值覆盖对应窗口。
     private func merge(coarse: QuotaSnapshot) {
+        if let o = accountOverride, coarse.account.userId == o { accountOverride = nil }   // 帧跟上来了
         var merged = coarse
         if let exact = pendingExact, Date().timeIntervalSince(exact.receivedAt) < 45 {
             merged = apply(exact: exact, onto: coarse)
@@ -534,7 +640,7 @@ final class Store: ObservableObject {
     private var pendingExact: QuotaSnapshot?
 
     private func refreshExact() {
-        let expected = relay.lastUserId
+        let expected = DispatchQueue.main.sync { self.accountOverride } ?? relay.lastUserId
         guard let payload = limits.fetch(expectedUserId: expected) else {
             // 读不到精确值不是错误：没有活跃会话时本就如此，帧口径照常工作。
             DispatchQueue.main.async { [weak self] in
@@ -577,6 +683,17 @@ final class Store: ObservableObject {
     /// 精确值覆盖帧值。以窗口名配对，帧里有而精确源没有的窗口原样保留。
     private func apply(exact: QuotaSnapshot, onto base: QuotaSnapshot) -> QuotaSnapshot {
         var out = base
+        // 两路账号不一致＝帧滞后（刚切过账号）：身份以精确源为准，名字与套餐从账号库补
+        if let eu = exact.account.userId, eu != base.account.userId {
+            let saved = accounts.first { $0.userId == eu }
+            out.account = AccountInfo(userId: eu, name: saved?.name, email: nil, plan: saved?.plan, planExpiry: saved?.planExpiry,
+                                      paid: exact.account.paid, relayStatus: base.account.relayStatus, host: base.account.host)
+            out.windows = exact.windows
+            out.capturedAt = exact.capturedAt
+            out.receivedAt = exact.receivedAt
+            out.precision = .exact
+            return out
+        }
         var drift: Double = 0
         var driftWindow: String?
         for e in exact.windows {

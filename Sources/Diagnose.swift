@@ -123,6 +123,13 @@ enum Diagnose {
         }
 
         let sess = ledger.sessions(activeSince: Date().addingTimeInterval(-6 * 3600), userId: uid, limit: 5)
+        let vault = AccountVault()
+        say("账号库：\(vault.accounts.count) 个" + (vault.accounts.isEmpty ? "（在 Mirasim 里登录过的账号会自动记住）" : "")
+            + " · setting.json 当前 \(AccountVault.currentUserIdOnDisk().map { String($0.prefix(12)) + "…" } ?? "?") · 备份 \(AccountVault.backups().count) 份")
+        for a in vault.accounts {
+            let wins = a.lastWindows.map { "\($0.name) \(String(format: "%.1f", $0.usedPercent))%" }.joined(separator: " ")
+            say("  \(a.displayName) · \(a.userId.prefix(12))… · 套餐 \(a.plan ?? "?") · 凭据更新 \(Fmt.clock(a.capturedAt)) · token 到期 \(a.tokenExpiry.map(Fmt.clock) ?? "?") · 最近在线 \(Fmt.ago(Date().timeIntervalSince(a.lastSeenAt)))" + (wins.isEmpty ? "" : " · " + wins))
+        }
         say("会话（近 6 小时活跃，整个会话累计）：\(sess.count) 个")
         for s in sess {
             let title = SessionTitles.title(session: s.id, workspace: s.workspace) ?? String(s.id.prefix(8))

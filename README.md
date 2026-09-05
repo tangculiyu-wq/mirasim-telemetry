@@ -142,8 +142,10 @@ perl scripts/points-audit/ptsfit3.pl usr_xxx   # 检验 Fable 5.1 按哪套权�
 两个额度来源的数据相同（帧里 `usage.source` 为 `relay-limits`）。两者都可用时做交叉校验，差值超过 0.35 个百分点时在明细里提示。
 预算点是 Mirasim 中继套餐的数值，不是 Anthropic 官方直连套餐的标称额度。
 
-程序不读取任何凭证，不发起对外网络请求，不写入 Mirasim 的任何文件，只读取本机回环端口与本机文件。
-写入的文件只有 `~/Library/Application Support/EduHuan/` 下的采样（保留 24 小时）与标定文件，以及 UserDefaults 里的偏好设置。
+程序不发起对外网络请求，只读取本机回环端口与本机文件。写入的文件只有 `~/Library/Application Support/EduHuan/` 下的采样
+（保留 24 小时）、标定文件、账号库与 `setting.json` 备份，以及 UserDefaults 里的偏好设置。
+唯一会写到 Mirasim 目录里的动作是你主动点「切换账号」时替换 `~/.mirasim/setting.json` 的登录块（见「一键切换账号」），
+替换前必备份。账号库保存的是 Mirasim 写出的加密登录块，本程序不解析它。关掉「记住登录过的账号」后不再保存。
 
 ## 使用
 
@@ -158,6 +160,30 @@ perl scripts/points-audit/ptsfit3.pl usr_xxx   # 检验 Fable 5.1 按哪套权�
   语言（跟随系统 / 中文 / English）、会话卡开关、菜单栏百分比与显示哪个窗口、额度警报与警戒线（50%–99%）、
   走势线跨度、开机自启、重置窗口位置、重扫账本。
 - 菜单栏图标显示剩余最少的窗口（可在设置里改）。左键点击显示或隐藏面板。
+- **一键切换账号**：点面板顶上的账号名，列出在 Mirasim 里登录过的云端账号，点谁切谁；右键菜单里有同一份「切换账号」。
+  每个账号旁标注上次看到的 7 天余量和多久前在线。做法见下一节。
+
+## 一键切换账号
+
+Mirasim 的云端账号（面板顶上那个名字，额度窗口跟它走）只能登出再重新验证码登录，没有多账号池。
+本程序补上这一步：
+
+1. 你在 Mirasim 里登录过的每个账号，登录块（`~/.mirasim/setting.json` 里的 `auth`）会自动记进本机账号库
+   `~/Library/Application Support/EduHuan/accounts.json`（权限 0600，仅本人可读）。这个块是 Mirasim 用本机密钥加密后写出的密文，
+   本程序不解析、不解密、不外发，只原样保存。
+2. 切换时：先把整份 `setting.json` 备份到 `EduHuan/setting-backups/`（保留 12 份），再把选中账号的登录块原子替换进去。
+   Mirasim 每次用 token 都重新读这个文件，所以不需要重启，正在跑的 Claude Code 会话不受影响，之后的调用直接记到新账号。
+3. 然后核对：会话回环的 `/v1/limits` 按新账号返回，或 relay 帧里的账号变成目标，即为成功。有会话在、却仍读到旧账号，
+   说明没切过去，自动还原备份。没有活跃会话时读不到 `/v1/limits`，帧又走长连接可能滞后，这时显示「Mirasim 还没确认」并给出「还原」按钮。
+
+限制与注意：
+
+- 登录块绑定本机（AES-GCM，密钥在系统钥匙串）。账号库不能拷到别的电脑用。
+- 切走后 Mirasim 的 mirachannel 长连接和设备注册仍挂在旧账号，直到它自然重连；期间 Mirasim 界面里的账号名可能还是旧的，
+  远程配对的设备列表也可能挂错账号。本面板以 `/v1/limits` 的账号为准，不受影响。
+- 长时间没用过的账号，其刷新令牌可能已失效。切过去后 Mirasim 会要求重新登录；点「还原」回到原账号即可。
+- 不要在这一步之外重启 Mirasim 服务：`restartHost` 会杀掉它拉起的全部 Claude Code 会话进程，会话的回环路由也随之失效。
+- 设置里可以关掉「记住登录过的账号」，或「清空账号库」。
 
 Mirasim 日志文件有变化时，速度、花费与点数在 1.2 到 5 秒内刷新。额度点每 20 秒读取一次，帧数据到达时立即更新。
 
@@ -239,6 +265,7 @@ Sources/
   RelayClient.swift     mirachannel WebSocket 客户端
   CostLedger.swift      花费账本（insights 逐调用 × 价目表），支持按指定模型重算
   Calibrator.swift      每点单价的备用标定（窗口早于本机计量起点时使用）
+  AccountVault.swift    账号库：记住登录过的账号，切换时备份并替换 setting.json 的登录块
   SpeedStats.swift      速度：耗时与 token 按请求号配对，含子代理日志
   Store.swift           合并两个来源、采样、花费、等价换算、警报、会话与请求统计、提示区块
   Theme.swift           配色、字体、格式化、语言开关
