@@ -540,6 +540,8 @@ final class Store: ObservableObject {
         switchState = .switching(target: userId, since: Date(), phase: L("写入凭据", "writing credentials"))
         work.async { [weak self] in
             guard let self else { return }
+            // 切换前额度接口读得到、切换后读不到＝新账号的登录用不了（刷新令牌失效等），必须还原
+            let readableBefore = self.limits.fetch(expectedUserId: nil) != nil
             let backup: URL
             do { backup = try self.vault.writeAuth(of: userId) }
             catch {
@@ -559,8 +561,13 @@ final class Store: ObservableObject {
                 if frameUser == userId { confirmed = true; break }
                 Thread.sleep(forTimeInterval: 2)
             }
-            if !confirmed, let any = self.limits.fetch(expectedUserId: nil), any.subject != userId {
-                stillOld = true   // 有会话在、也读得到额度，却还是旧账号：文件没被吃到，不能留半截
+            var brokeIt = false
+            if !confirmed {
+                if let any = self.limits.fetch(expectedUserId: nil) {
+                    if any.subject != userId { stillOld = true }   // 有会话在、也读得到额度，却还是旧账号：文件没被吃到，不能留半截
+                } else if readableBefore {
+                    brokeIt = true
+                }
             }
             DispatchQueue.main.async {
                 if confirmed {
@@ -570,10 +577,12 @@ final class Store: ObservableObject {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
                         if case .done = self?.switchState ?? .idle { self?.switchState = .idle }
                     }
-                } else if stillOld {
+                } else if stillOld || brokeIt {
                     try? self.vault.restore(backup: backup)
                     self.switchState = .failed(target: userId,
-                                               message: L("Mirasim 没有切过去，已还原原来的登录", "Mirasim did not switch; the previous sign-in was restored"),
+                                               message: stillOld
+                                                   ? L("Mirasim 没有切过去，已还原原来的登录", "Mirasim did not switch; the previous sign-in was restored")
+                                                   : L("切过去后读不到额度接口，那个账号的登录可能已失效，已还原", "Quota endpoint unreadable after the switch; that account's sign-in may have expired. Restored."),
                                                backup: backup)
                 } else {
                     self.switchState = .unconfirmed(target: userId, backup: backup)
@@ -641,7 +650,15 @@ final class Store: ObservableObject {
 
     private func refreshExact() {
         let expected = DispatchQueue.main.sync { self.accountOverride } ?? relay.lastUserId
-        guard let payload = limits.fetch(expectedUserId: expected) else {
+        var fetched = limits.fetch(expectedUserId: expected)
+        // 帧那一路的账号读不到精确值时，看 setting.json 里现在是谁：别的进程（命令行、网页版）切了号，
+        // 帧还没跟上，精确源已经按新账号返回了——以磁盘上的登录为准，并记为覆盖账号
+        if fetched == nil, let onDisk = AccountVault.currentUserIdOnDisk(), onDisk != expected,
+           let p = limits.fetch(expectedUserId: onDisk) {
+            fetched = p
+            DispatchQueue.main.async { [weak self] in self?.accountOverride = onDisk }
+        }
+        guard let payload = fetched else {
             // 读不到精确值不是错误：没有活跃会话时本就如此，帧口径照常工作。
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }

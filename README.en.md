@@ -195,6 +195,11 @@ Limits and caveats:
 - Do not restart Mirasim's host as part of this: `restartHost` kills every Claude Code session process it spawned, and their
   loopback routes die with them.
 - Settings let you turn off "Remember signed-in accounts" or clear the vault.
+- The command line can switch too, through the same flow, printing progress: `遥测 --switch-account <name, userId or its prefix>`;
+  exit code 0 = switched, 1 = failed and restored, 3 = written but unconfirmed.
+
+Measured on 2026-09-05 with two MAX accounts switched back and forth: each switch confirmed in 5–10 seconds, running Claude Code
+sessions were unaffected, and the relay frame's account followed immediately with no lag.
 
 When Mirasim's log changes, speed, spend and points refresh within 1.2–5 seconds. Points are read every 20 seconds; frames update immediately.
 

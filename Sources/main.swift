@@ -2,8 +2,43 @@ import AppKit
 import ServiceManagement
 
 // 命令行模式（渲染/自检）不落盘：防与正在跑的正式实例并发写账本
-if CommandLine.arguments.contains(where: { ["--render", "--render-capsule", "--render-icons", "--diag"].contains($0) }) {
+if CommandLine.arguments.contains(where: { ["--render", "--render-capsule", "--render-icons", "--diag", "--switch-account"].contains($0) }) {
     CostLedger.readOnly = true
+}
+
+// 命令行切换云端账号：--switch-account <userId 或名字或 userId 前缀>。走与面板同一套流程，打印进度。
+if let i = CommandLine.arguments.firstIndex(of: "--switch-account"), i + 1 < CommandLine.arguments.count {
+    let key = CommandLine.arguments[i + 1]
+    _ = NSApplication.shared
+    NSApp.setActivationPolicy(.prohibited)
+    let store = Store()
+    guard let target = store.accounts.first(where: { $0.userId == key || $0.name == key || $0.userId.hasPrefix(key) }) else {
+        print("账号库里没有「\(key)」。现有：" + (store.accounts.isEmpty ? "（空）" : store.accounts.map { "\($0.displayName) \($0.userId)" }.joined(separator: "；")))
+        exit(2)
+    }
+    let start = Date()
+    while store.snapshot == nil && Date().timeIntervalSince(start) < 8 {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.2))
+    }
+    print("当前 \(store.snapshot?.account.name ?? "?") \(store.snapshot?.account.userId ?? "?") → 切到 \(target.displayName) \(target.userId)")
+    store.switchAccount(to: target.userId)
+    var lastPhase = ""
+    while Date().timeIntervalSince(start) < 120 {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.3))
+        switch store.switchState {
+        case .switching(_, _, let phase):
+            if phase != lastPhase { print("… \(phase)"); lastPhase = phase }
+        case .done:
+            print("✓ 已切到 \(target.displayName)；面板与后续调用按它计"); exit(0)
+        case .failed(_, let msg, _):
+            print("✗ \(msg)"); exit(1)
+        case .unconfirmed(_, let backup):
+            print("? 已写入，Mirasim 尚未确认（没有活跃会话时要等它下次刷新）。备份：\(backup.path)"); exit(3)
+        case .idle:
+            if lastPhase.isEmpty && Date().timeIntervalSince(start) > 12 { print("没有开始切换（可能已是当前账号）"); exit(1) }
+        }
+    }
+    print("超时"); exit(1)
 }
 
 // 离屏渲染模式：--render <路径> [--light] [--detail] [--wait 秒]

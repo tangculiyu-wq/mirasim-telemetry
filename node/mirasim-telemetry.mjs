@@ -739,6 +739,7 @@ async function switchAccount(userId) {
   const cur = state.relay.frame?.account?.userId ?? state.relay.lastUserId ?? null;
   if (cur === userId) throw new Error('已经是当前账号');
   switchStatus.switching = { target: userId, since: Date.now(), phase: 'write' }; compute();
+  const readableBefore = !!(await fetchLimits(null));   // 切前读得到、切后读不到＝新账号登录用不了，必须还原
   let backup;
   try { backup = state.vault.writeAuth(userId); }
   catch (e) { switchStatus.switching = null; switchStatus.last = { ok: false, target: userId, at: Date.now(), message: e.message }; compute(); return switchStatus.last; }
@@ -762,6 +763,9 @@ async function switchAccount(userId) {
     if (any && any.subject !== userId) {   // 有会话在、读得到额度，却还是旧账号：文件没被吃到，不能留半截
       try { state.vault.restore(backup); } catch { /* 还原失败会在下一拍被采集成新状态 */ }
       switchStatus.last = { ok: false, target: userId, at: Date.now(), message: 'Mirasim 没有切过去，已还原原来的登录', messageEn: 'Mirasim did not switch; the previous sign-in was restored', backup };
+    } else if (!any && readableBefore) {
+      try { state.vault.restore(backup); } catch { /* 同上 */ }
+      switchStatus.last = { ok: false, target: userId, at: Date.now(), message: '切过去后读不到额度接口，那个账号的登录可能已失效，已还原', messageEn: "Quota endpoint unreadable after the switch; that account's sign-in may have expired. Restored.", backup };
     } else {
       switchStatus.last = { ok: false, unconfirmed: true, target: userId, at: Date.now(), backup,
         message: '已写入新登录，Mirasim 还没确认（没有活跃会话时要等它下次刷新）', messageEn: 'Wrote the new sign-in; Mirasim has not confirmed yet (with no active session it waits for its next refresh)' };
@@ -1001,7 +1005,12 @@ function compute() {
 /* ---------------- 采集节拍 ---------------- */
 
 async function refreshLimits() {
-  const p = await fetchLimits(state.accountOverride || state.relay.lastUserId);
+  const expected = state.accountOverride || state.relay.lastUserId;
+  let p = await fetchLimits(expected);
+  if (!p) {   // 帧账号读不到精确值：看 setting.json 现在是谁（别的进程切了号、帧还没跟上）
+    const onDisk = AccountVault.currentUserIdOnDisk();
+    if (onDisk && onDisk !== expected) { p = await fetchLimits(onDisk); if (p) state.accountOverride = onDisk; }
+  }
   if (p) { state.limits = p; state.limitsAt = Date.now(); }
   else if (Date.now() - state.limitsAt > STALE_AFTER_S * 1000) state.limits = null;
   const snap = snapshot();
